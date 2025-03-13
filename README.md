@@ -12,7 +12,7 @@ This repository contains a framework for optimizing analysis categories in a dif
 
 1. Clone the repository:
    ```bash
-   git clone <repository_url>
+   git clone https://github.com/FloMau/gato.git
 
 ## Run examples
 ### Toy example
@@ -20,7 +20,9 @@ Idea: generate a toy NN output distribution for three background processes and a
 So far, it only generates the data and plots them.
 Optimisation of binning for signal sensitivity will be included soon.
 
-Run it via: `python examples/toy_example/run_toy_example.py`
+Run it via: 
+```bash
+python examples/toy_example/run_toy_example.py
 
 
 ### Further examples
