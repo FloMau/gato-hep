@@ -4,7 +4,7 @@ import tensorflow as tf
 
 def asymptotic_significance(S, B, eps=1e-9):
     """
-    Default Asimov significance function with S/sqrt(B) approximation at low S/B.
+    Default asymptotic significance function with S/sqrt(B) approximation at very low S/B.
     """
     safe_B = tf.maximum(B, eps)
     ratio = S / safe_B
@@ -12,8 +12,12 @@ def asymptotic_significance(S, B, eps=1e-9):
     Z_asimov = tf.sqrt(2.0 * ((S + safe_B)*tf.math.log(1.0 + ratio) - S))
     # S/sqrt(B) approximation for small S/B:
     Z_approx = S / tf.sqrt(safe_B)
-    # Switch where ratio < 0.1
-    return tf.where(ratio < 0.1, Z_approx, Z_asimov)
+    # Switch where ratio < 0.001
+    return tf.where(ratio < 0.001, Z_approx, Z_asimov)
+
+def safe_sigmoid(z, steepness):
+    z_clipped = tf.clip_by_value(-steepness * z, -50.0, 50.0)
+    return 1.0 / (1.0 + tf.exp(z_clipped))
 
 def soft_bin_weights(x, raw_boundaries, steepness=50.0):
     """
@@ -27,23 +31,21 @@ def soft_bin_weights(x, raw_boundaries, steepness=50.0):
         return [tf.ones_like(x, dtype=tf.float32)]
 
     boundaries = tf.sort(tf.sigmoid(raw_boundaries))  # ensure ascending order in [0,1]
+    #### to be checked!!!
 
     # define a safe sigmoid that won't overflow for large inputs
-    def safe_sigmoid(z):
-        z_clipped = tf.clip_by_value(-steepness * z, -50.0, 50.0)
-        return 1.0 / (1.0 + tf.exp(z_clipped))
 
     n_cats = len(boundaries) + 1
     w_list = []
     for i in range(n_cats):
         if i == 0:
-            w0 = 1.0 - safe_sigmoid(x - boundaries[0])
+            w0 = 1.0 - safe_sigmoid(x - boundaries[0], steepness)
             w_list.append(w0)
         elif i == (n_cats - 1):
-            wN = safe_sigmoid(x - boundaries[-1])
+            wN = safe_sigmoid(x - boundaries[-1], steepness)
             w_list.append(wN)
         else:
-            w_i = safe_sigmoid(x - boundaries[i - 1]) - safe_sigmoid(x - boundaries[i])
+            w_i = safe_sigmoid(x - boundaries[i - 1], steepness) - safe_sigmoid(x - boundaries[i], steepness)
             w_list.append(w_i)
     return w_list
 
