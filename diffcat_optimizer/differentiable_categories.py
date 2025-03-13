@@ -1,5 +1,3 @@
-import numpy as np
-import pandas as pd
 import tensorflow as tf
 
 def asymptotic_significance(S, B, eps=1e-9):
@@ -13,10 +11,10 @@ def asymptotic_significance(S, B, eps=1e-9):
     # S/sqrt(B) approximation for small S/B:
     Z_approx = S / tf.sqrt(safe_B)
     # Switch where ratio < 0.001
-    return tf.where(ratio < 0.001, Z_approx, Z_asimov)
+    return tf.where(ratio < 0.1, Z_approx, Z_asimov)
 
 def safe_sigmoid(z, steepness):
-    z_clipped = tf.clip_by_value(-steepness * z, -50.0, 50.0)
+    z_clipped = tf.clip_by_value(-steepness * z, -100.0, 100.0)
     return 1.0 / (1.0 + tf.exp(z_clipped))
 
 def soft_bin_weights(x, raw_boundaries, steepness=50.0):
@@ -31,7 +29,8 @@ def soft_bin_weights(x, raw_boundaries, steepness=50.0):
         return [tf.ones_like(x, dtype=tf.float32)]
 
     boundaries = tf.sort(tf.sigmoid(raw_boundaries))  # ensure ascending order in [0,1]
-    #### to be checked!!!
+    # boundaries = tf.sigmoid(raw_boundaries)
+    #### to be checked!!! -> without the sorting it does not work, I assume it does not break the gradient calculation if it is done as here, but this has to be verified somehow
 
     # define a safe sigmoid that won't overflow for large inputs
 
@@ -94,7 +93,10 @@ class DifferentiableCutModel(tf.Module):
                 trainable=True,
                 name=f"raw_bndry_{var_cfg['name']}"
             )
-            self.raw_boundaries_list.append(raw_var)
+            self.raw_boundaries_list.append(
+                # tf.sort(raw_var)
+                raw_var
+            )
 
     def call(self, data_dict):
         """

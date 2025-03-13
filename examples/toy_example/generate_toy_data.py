@@ -46,12 +46,11 @@ def generate_toy_data(n_signal=1000,
     if seed is not None:
         np.random.seed(seed)
     
-    # Choose lambda parameters for the exponential distributions:
-    # For backgrounds, larger lambda → sharper decay (more events near 0)
-    lam_bkg1 = 5    # steeper decay
-    lam_bkg2 = 3    # intermediate decay
-    lam_bkg3 = 1    # shallow decay (more tail)
-    
+    # lambda parameters for the exponential distributions
+    lam_bkg1 = 10    # steeper decay / easy background
+    lam_bkg2 = 5    # medium friendly background
+    lam_bkg3 = 2    # analyzers hate this background
+
     # For the signal, we want most events near 1. Use a lambda value to concentrate near 1.
     lam_signal = 5
 
@@ -60,7 +59,7 @@ def generate_toy_data(n_signal=1000,
     nn_bkg1 = sample_background(n_bkg1, lam_bkg1)
     nn_bkg2 = sample_background(n_bkg2, lam_bkg2)
     nn_bkg3 = sample_background(n_bkg3, lam_bkg3)
-    
+
     # Optionally, one could compute per-event weights based on cross section and lumi,
     # e.g., weight = (xs * lumi) / n_generated
     weight_signal = xs_signal * lumi / n_signal
@@ -73,14 +72,14 @@ def generate_toy_data(n_signal=1000,
     df_bkg1 = pd.DataFrame({"NN_output": nn_bkg1, "weight": weight_bkg1})
     df_bkg2 = pd.DataFrame({"NN_output": nn_bkg2, "weight": weight_bkg2})
     df_bkg3 = pd.DataFrame({"NN_output": nn_bkg3, "weight": weight_bkg3})
-    
+
     data = {
         "signal": df_signal,
         "bkg1": df_bkg1,
         "bkg2": df_bkg2,
         "bkg3": df_bkg3
     }
-    
+
     return data
 
 # If this module is executed directly, generate toy data and print summary stats.
