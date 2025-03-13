@@ -1,4 +1,4 @@
-# Differentiable Categorisation
+# GATO: Gradient-based cATegoryzation Optimizer
 
 This repository contains a framework for optimizing analysis categories in a differentiable way using TensorFlow. It is designed to be both general and configurable, and can be adapted for specific HEP analyses such as the ttH vs. tH optimization.
 
@@ -6,7 +6,6 @@ This repository contains a framework for optimizing analysis categories in a dif
 
 - `diffcat_optimizer/`: Contains the core Python modules.
 - `examples/`: Example scripts for toy data and a specialized ttH-tH analysis.
-- `setup.py`: Script for installing the package (optional).
 - `requirements.txt`: Lists the required Python packages.
 
 ## Getting Started
@@ -14,3 +13,12 @@ This repository contains a framework for optimizing analysis categories in a dif
 1. Clone the repository:
    ```bash
    git clone <repository_url>
+
+## Run examples
+### Toy example
+Idea: generate a toy NN output distribution for three background processes and a signal process. 
+So far, it only generates the data and plots them.
+Optimisation of binning for signal sensitivity will be included soon
+
+### Further examples
+To be included soon
