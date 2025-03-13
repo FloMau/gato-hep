@@ -18,7 +18,10 @@ This repository contains a framework for optimizing analysis categories in a dif
 ### Toy example
 Idea: generate a toy NN output distribution for three background processes and a signal process. 
 So far, it only generates the data and plots them.
-Optimisation of binning for signal sensitivity will be included soon
+Optimisation of binning for signal sensitivity will be included soon.
+
+Run it via: `python examples/toy_example/run_toy_example.py`
+
 
 ### Further examples
 To be included soon
