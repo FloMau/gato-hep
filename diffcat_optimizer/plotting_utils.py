@@ -23,7 +23,7 @@ def plot_stacked_histograms(
     """
     Plots stacked histograms for backgrounds and overlays signal histograms.
     This is a simplified version that drops ratio panels, data hist, and CMS labels.
-    
+
     Parameters:
       - stacked_hists: list of hist.hist objects (backgrounds).
       - process_labels: list of strings for background process names.
@@ -141,3 +141,73 @@ def plot_stacked_histograms(
         plt.close(fig)
     else:
         return fig, ax_main
+
+def plot_history(
+    history_data,
+    output_filename,
+    y_label="Value",
+    x_label="Epoch",
+    boundaries=False,
+    title=None,
+    log_scale=False
+):
+    """
+    Plots a 1D array or a list-of-lists over epochs.
+    
+    Parameters
+    ----------
+    history_data : list
+        - If boundaries=False, a simple list of scalar floats (e.g. loss each epoch).
+        - If boundaries=True, a list of lists. Each history_data[i] is a list
+          of boundary positions at epoch i (for a 1D categorization).
+    output_filename : str
+        Where to save the resulting PDF plot.
+    y_label : str
+        Label for the y-axis.
+    x_label : str
+        Label for the x-axis.
+    boundaries : bool
+        If False, we assume a scalar (1D) history => plot one line of y vs epoch.
+        If True, we assume each item in history_data[i] is a list of boundary positions => 
+        we draw multiple lines, one for each boundary index.
+    title : str
+        (Optional) title for the plot.
+    log_scale : bool
+        Whether to set the y-axis to log scale.
+    """
+    if not history_data:
+        print("[plot_history] No data to plot.")
+        return
+    
+    epochs = np.arange(len(history_data))
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    if not boundaries:
+        # history_data is assumed to be a list of floats
+        ax.plot(epochs, history_data, marker='o', label=y_label)
+    else:
+        # history_data is a list of lists: boundary positions at each epoch
+        max_nb = max(len(b) for b in history_data)  # how many boundaries in total
+        for boundary_idx in range(max_nb):
+            boundary_vals = []
+            for i in range(len(history_data)):
+                b_list = history_data[i]
+                if boundary_idx < len(b_list):
+                    boundary_vals.append(b_list[boundary_idx])
+                else:
+                    boundary_vals.append(np.nan)
+            ax.plot(epochs, boundary_vals, marker='o', label=f"Boundary {boundary_idx+1}")
+
+    ax.set_xlabel(x_label, fontsize=16)
+    ax.set_ylabel(y_label, fontsize=16)
+    if title:
+        ax.set_title(title, fontsize=16)
+    ax.legend(ncol=2)
+    
+    if log_scale:
+        ax.set_yscale('log')
+    
+    fig.tight_layout()
+    os.makedirs(os.path.dirname(output_filename), exist_ok=True)
+    fig.savefig(output_filename)
+    plt.close(fig)

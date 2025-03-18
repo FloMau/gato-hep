@@ -25,8 +25,8 @@ def sample_signal(n_events, lam):
     x = 1 - z
     return x
 
-def generate_toy_data(n_signal=1000, 
-                      n_bkg1=1000, n_bkg2=1000, n_bkg3=1000,
+def generate_toy_data(n_signal=1000, n_bkg1=1000, n_bkg2=1000, n_bkg3=1000,
+                      lam_signal = 5, lam_bkg1=10, lam_bkg2=5, lam_bkg3=2, 
                       xs_signal=0.5, xs_bkg1=100, xs_bkg2=10, xs_bkg3=1,
                       lumi=100, seed=None):
     """
@@ -45,14 +45,6 @@ def generate_toy_data(n_signal=1000,
     """
     if seed is not None:
         np.random.seed(seed)
-    
-    # lambda parameters for the exponential distributions
-    lam_bkg1 = 10    # steeper decay / easy background
-    lam_bkg2 = 5    # medium friendly background
-    lam_bkg3 = 2    # analyzers hate this background
-
-    # For the signal, we want most events near 1. Use a lambda value to concentrate near 1.
-    lam_signal = 5
 
     # Generate NN outputs
     nn_signal = sample_signal(n_signal, lam_signal)

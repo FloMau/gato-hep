@@ -14,7 +14,7 @@ def asymptotic_significance(S, B, eps=1e-9):
     return tf.where(ratio < 0.1, Z_approx, Z_asimov)
 
 def safe_sigmoid(z, steepness):
-    z_clipped = tf.clip_by_value(-steepness * z, -100.0, 100.0)
+    z_clipped = tf.clip_by_value(-steepness * z, -75.0, 75.0)
     return 1.0 / (1.0 + tf.exp(z_clipped))
 
 def soft_bin_weights(x, raw_boundaries, steepness=50.0):
@@ -48,6 +48,25 @@ def soft_bin_weights(x, raw_boundaries, steepness=50.0):
             w_list.append(w_i)
     return w_list
 
+def low_bkg_penalty(b_nonres_cat, threshold=10.0, steepness=10):
+    """
+    b_nonres_cat: tf.Tensor of shape [ncat], the nonres yields in each category 
+                  (over the entire mass range).
+    We define penalty_j = alpha * sigmoid( steepness * (threshold - b_nonres_cat[j]) ).
+    Then we sum over all categories.
+    """
+    # clamp it to avoid negative yields
+    safe_b = tf.maximum(b_nonres_cat, 0.0)
+    # define x = threshold - safe_b
+    x = threshold - safe_b
+    # define s = sigmoid( x * steepness )
+    step = safe_sigmoid(x, steepness)
+    # penalty per category
+    penalty_vals = step * (b_nonres_cat - threshold)**2
+    # sum over categories
+    total_penalty = tf.reduce_sum(penalty_vals)
+    return total_penalty
+
 
 class DifferentiableCutModel(tf.Module):
     """
@@ -68,6 +87,7 @@ class DifferentiableCutModel(tf.Module):
         self,
         variables_config,
         significance_func=asymptotic_significance,
+        initialisation=None,
         name="DifferentiableCutModel",
         **kwargs
     ):
@@ -83,20 +103,27 @@ class DifferentiableCutModel(tf.Module):
         self.variables_config = variables_config
         self.significance_func = significance_func
 
-        # Create a trainable tf.Variable for each variable's boundaries
+        # Create a trainable tf.Variable for each variable's boundaries.
         self.raw_boundaries_list = []
         for var_cfg in variables_config:
             n_cats = var_cfg["n_cats"]
             shape = (n_cats - 1,) if n_cats > 1 else (0,)
-            raw_var = tf.Variable(
-                tf.random.normal(shape=shape, stddev=0.3),
-                trainable=True,
-                name=f"raw_bndry_{var_cfg['name']}"
-            )
-            self.raw_boundaries_list.append(
-                # tf.sort(raw_var)
-                raw_var
-            )
+            if initialisation == "equidistant" and n_cats > 1:
+                # For equidistant boundaries effective positions: i/n_cats for i=1,..., n_cats-1.
+                init_vals = [
+                    tf.math.log(
+                        (tf.cast(i, tf.float32) / tf.cast(n_cats, tf.float32)) /
+                        (1 - tf.cast(i, tf.float32) / tf.cast(n_cats, tf.float32))
+                    )
+                    for i in range(1, n_cats)
+                ]
+                init_tensor = tf.stack(init_vals)
+
+            else:
+                init_tensor = tf.random.normal(shape=shape, stddev=0.3)
+            raw_var = tf.Variable(init_tensor, trainable=True, name=f"raw_bndry_{var_cfg['name']}")
+            self.raw_boundaries_list.append(raw_var)
+
 
     def call(self, data_dict):
         """
