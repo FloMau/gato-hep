@@ -28,11 +28,7 @@ def soft_bin_weights(x, raw_boundaries, steepness=50.0):
         # means only 1 category => everything in that category
         return [tf.ones_like(x, dtype=tf.float32)]
 
-    boundaries = tf.sort(tf.sigmoid(raw_boundaries))  # ensure ascending order in [0,1]
-    # boundaries = tf.sigmoid(raw_boundaries)
-    #### to be checked!!! -> without the sorting it does not work, I assume it does not break the gradient calculation if it is done as here, but this has to be verified somehow
-
-    # define a safe sigmoid that won't overflow for large inputs
+    boundaries = raw_boundaries_to_boundaries(raw_boundaries)
 
     n_cats = len(boundaries) + 1
     w_list = []
@@ -47,6 +43,26 @@ def soft_bin_weights(x, raw_boundaries, steepness=50.0):
             w_i = safe_sigmoid(x - boundaries[i - 1], steepness) - safe_sigmoid(x - boundaries[i], steepness)
             w_list.append(w_i)
     return w_list
+
+def raw_boundaries_to_boundaries(raw_boundaries):
+    """
+    Transforms raw boundaries (trainable) into an ordered set in (0,1)
+    using a softmax transformation followed by a cumulative sum.
+
+    The softmax ensures the increments are positive and sum to one,
+    and the cumulative sum produces strictly increasing boundaries in [0,1].
+    
+    Parameters:
+      - raw_boundaries: Tensor of raw boundary parameters.
+
+    Returns:
+      A tensor of boundaries in (0,1) with increasing order.
+    """
+    # Use softmax to get a set of positive increments that sum to one.
+    increments = tf.nn.softmax(raw_boundaries)
+    # Compute the cumulative sum to generate boundaries in [0,1].
+    boundaries = tf.cumsum(increments)
+    return boundaries[:-1] # ignore last value which is always 1.0
 
 def low_bkg_penalty(b_nonres_cat, threshold=10.0, steepness=10):
     """
@@ -87,7 +103,6 @@ class DifferentiableCutModel(tf.Module):
         self,
         variables_config,
         significance_func=asymptotic_significance,
-        initialisation=None,
         name="DifferentiableCutModel",
         **kwargs
     ):
@@ -107,23 +122,11 @@ class DifferentiableCutModel(tf.Module):
         self.raw_boundaries_list = []
         for var_cfg in variables_config:
             n_cats = var_cfg["n_cats"]
-            shape = (n_cats - 1,) if n_cats > 1 else (0,)
-            if initialisation == "equidistant" and n_cats > 1:
-                # For equidistant boundaries effective positions: i/n_cats for i=1,..., n_cats-1.
-                init_vals = [
-                    tf.math.log(
-                        (tf.cast(i, tf.float32) / tf.cast(n_cats, tf.float32)) /
-                        (1 - tf.cast(i, tf.float32) / tf.cast(n_cats, tf.float32))
-                    )
-                    for i in range(1, n_cats)
-                ]
-                init_tensor = tf.stack(init_vals)
-
-            else:
-                init_tensor = tf.random.normal(shape=shape, stddev=0.3)
+            shape = (n_cats,) if n_cats > 1 else (0,) # in current implementation, the last value is 1, i.e., will be ignored
+            
+            init_tensor = tf.random.normal(shape=shape, stddev=0.3)
             raw_var = tf.Variable(init_tensor, trainable=True, name=f"raw_bndry_{var_cfg['name']}")
             self.raw_boundaries_list.append(raw_var)
-
 
     def call(self, data_dict):
         """
@@ -146,5 +149,6 @@ class DifferentiableCutModel(tf.Module):
             if raw_var.shape[0] == 0:
                 out[var_cfg["name"]] = []
             else:
-                out[var_cfg["name"]] = tf.sort(tf.sigmoid(raw_var)).numpy().tolist()
+                # out[var_cfg["name"]] = tf.sort(tf.sigmoid(raw_var)).numpy().tolist()
+                out[var_cfg["name"]] = raw_boundaries_to_boundaries(raw_var)
         return out
