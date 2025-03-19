@@ -26,7 +26,7 @@ This is implemented with a differentiable penalty added to the loss.
 Run it via: 
 ```
 python examples/toy_example/run_toy_example.py
-'''
+```
 
 ### Further examples
 To be included soon
