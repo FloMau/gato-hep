@@ -6,7 +6,7 @@ It is designed to be both general and configurable, and can be adapted for speci
 
 - `diffcat_optimizer/`: Contains the core Python modules.
 - `examples/`: Examples how to use the package
-- `requirements.txt`: Lists the required Python packages.
+- `requirements.txt`: Lists the required Python packages. (Not yet, you need an env with TensorFlow 2, hist, numpy, pandas, mplhep)
 
 ## Getting Started
 
