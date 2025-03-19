@@ -196,14 +196,21 @@ def plot_history(
                     boundary_vals.append(b_list[boundary_idx])
                 else:
                     boundary_vals.append(np.nan)
-            ax.plot(epochs, boundary_vals, marker='o', label=f"Boundary {boundary_idx+1}")
+            ax.plot(epochs, boundary_vals, marker='o', label=f"Boundary {boundary_idx+1}", markersize=2 if max_nb>10 else 4)
 
     ax.set_xlabel(x_label, fontsize=16)
     ax.set_ylabel(y_label, fontsize=16)
     if title:
         ax.set_title(title, fontsize=16)
-    ax.legend(ncol=2)
-    
+    ax.legend(
+        ncol=2,
+        fontsize=8,           # reduce the text size
+        markerscale=0.5,      # make the legend markers smaller
+        labelspacing=0.2,     # reduce vertical space between labels
+        handlelength=1,       # shorten the line length for legend markers
+        handletextpad=0.4     # reduce space between marker and text
+    )
+
     if log_scale:
         ax.set_yscale('log')
     

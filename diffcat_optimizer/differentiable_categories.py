@@ -28,7 +28,7 @@ def soft_bin_weights(x, raw_boundaries, steepness=50.0):
         # means only 1 category => everything in that category
         return [tf.ones_like(x, dtype=tf.float32)]
 
-    boundaries = raw_boundaries_to_boundaries(raw_boundaries)
+    boundaries = calculate_boundaries(raw_boundaries)
 
     n_cats = len(boundaries) + 1
     w_list = []
@@ -44,25 +44,20 @@ def soft_bin_weights(x, raw_boundaries, steepness=50.0):
             w_list.append(w_i)
     return w_list
 
-def raw_boundaries_to_boundaries(raw_boundaries):
+def calculate_boundaries(raw_boundaries):
     """
     Transforms raw boundaries (trainable) into an ordered set in (0,1)
     using a softmax transformation followed by a cumulative sum.
 
     The softmax ensures the increments are positive and sum to one,
     and the cumulative sum produces strictly increasing boundaries in [0,1].
-    
-    Parameters:
-      - raw_boundaries: Tensor of raw boundary parameters.
-
-    Returns:
-      A tensor of boundaries in (0,1) with increasing order.
     """
-    # Use softmax to get a set of positive increments that sum to one.
     increments = tf.nn.softmax(raw_boundaries)
-    # Compute the cumulative sum to generate boundaries in [0,1].
+
     boundaries = tf.cumsum(increments)
+
     return boundaries[:-1] # ignore last value which is always 1.0
+
 
 def low_bkg_penalty(b_nonres_cat, threshold=10.0, steepness=10):
     """
@@ -150,5 +145,5 @@ class DifferentiableCutModel(tf.Module):
                 out[var_cfg["name"]] = []
             else:
                 # out[var_cfg["name"]] = tf.sort(tf.sigmoid(raw_var)).numpy().tolist()
-                out[var_cfg["name"]] = raw_boundaries_to_boundaries(raw_var)
+                out[var_cfg["name"]] = calculate_boundaries(raw_var)
         return out

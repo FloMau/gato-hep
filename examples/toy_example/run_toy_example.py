@@ -11,7 +11,7 @@ if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 
 from diffcat_optimizer.plotting_utils import plot_stacked_histograms, plot_history
-from diffcat_optimizer.differentiable_categories import asymptotic_significance, soft_bin_weights, DifferentiableCutModel, low_bkg_penalty, raw_boundaries_to_boundaries
+from diffcat_optimizer.differentiable_categories import asymptotic_significance, soft_bin_weights, DifferentiableCutModel, low_bkg_penalty, calculate_boundaries
 from generate_toy_data import generate_toy_data
 
 # ------------------------------------------------------------------------------
@@ -97,11 +97,11 @@ def main():
     data = generate_toy_data(
         n_signal=100000,
         n_bkg1=200000, n_bkg2=100000, n_bkg3=100000,
-        lam_signal = 6, lam_bkg1=7, lam_bkg2=7, lam_bkg3=3,
+        lam_signal = 6, lam_bkg1=8, lam_bkg2=6, lam_bkg3=3,
         xs_signal=0.5,    # 500 fb = 0.5 pb
         xs_bkg1=50, xs_bkg2=15, xs_bkg3=1,
         lumi=100,         # in /fb
-        seed=None
+        seed=42
     )
 
     # Create fixed histograms (with equidistant binning using 1500 bins as baseline, will be rebinned afterwards).
@@ -119,13 +119,14 @@ def main():
     signal_labels = ["Signal x 10"]
 
     # For demonstration, we compare multiple binning schemes.
-    equidistant_binning_options = [2, 5, 10, 15, 20]
-    gato_binning_options = [2, 5, 10, 15, 20]
+    equidistant_binning_options = [2, 5, 10, 15, 20, 30]
+    gato_binning_options = [2, 5, 10, 15, 20, 30]
     equidistant_significances = {}
     optimized_significances = {}
 
-    os.makedirs("examples/toy_example/Plots/", exist_ok=True)
-    fixed_plot_filename = f"examples/toy_example/Plots/toy_data.pdf"
+    path_plots = "examples/toy_example/Plots/"
+    os.makedirs(path_plots, exist_ok=True)
+    fixed_plot_filename = path_plots + f"toy_data.pdf"
     plot_stacked_histograms(
         stacked_hists=[bkg_hist[::hist.rebin(30)] for bkg_hist in bkg_hists],
         process_labels=process_labels,
@@ -160,7 +161,7 @@ def main():
         print(f"Fixed binning ({nbins} bins): Overall significance = {Z_equidistant:.3f}")
 
 
-        fixed_plot_filename = f"examples/toy_example/Plots/NN_output_distribution_fixed_{nbins}bins.pdf"
+        fixed_plot_filename = path_plots + f"NN_output_distribution_fixed_{nbins}bins.pdf"
         plot_stacked_histograms(
             stacked_hists=bkg_hists_rb,
             process_labels=process_labels,
@@ -188,7 +189,7 @@ def main():
         # --- Optimization: create a model instance with n_cats = nbins ---
         opt_model = one_dimensional_binning_optimiser(n_cats=nbins, steepness=500.0, )
         lam = 0.1
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.1) #, beta_1=0.5 if lam!=0 else 0.9)
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.03, beta_1=0.7 if lam!=0 else 0.9)
 
         loss_history = []
         regularisation_history = []
@@ -212,8 +213,7 @@ def main():
             loss_history.append(loss.numpy())
             regularisation_history.append(regularisation.numpy())
             # Save the current boundaries in [0,1]
-            boundaries_ = tf.sort(tf.sigmoid(opt_model.raw_boundaries_list[0])).numpy().tolist()
-            boundaries_ = raw_boundaries_to_boundaries(opt_model.raw_boundaries_list[0])
+            boundaries_ = calculate_boundaries(opt_model.raw_boundaries_list[0])
             boundary_history.append(boundaries_)
 
             if epoch % 5 == 0 or epoch == epochs - 1:
@@ -238,7 +238,7 @@ def main():
         # optimized_hists_dict[nbins] = (h_signal_opt, opt_bkg_hists)
         print(f"Optimized binning ({nbins} bins): Overall significance = {Z_opt:.3f}")
 
-        opt_plot_filename = f"examples/toy_example/Plots/NN_output_distribution_optimized_{nbins}bins.pdf"
+        opt_plot_filename = path_plots + f"NN_output_distribution_optimized_{nbins}bins.pdf"
         plot_stacked_histograms(
             stacked_hists=opt_bkg_hists,
             process_labels=process_labels,
@@ -264,7 +264,7 @@ def main():
 
         # --- Now plot the history using your single function:
         # Plot the loss
-        loss_plot_name = f"examples/toy_example/Plots/history_loss_{nbins}bins.pdf"
+        loss_plot_name = path_plots + f"history_loss_{nbins}bins.pdf"
         plot_history(
             history_data=loss_history,
             output_filename=loss_plot_name,
@@ -273,7 +273,7 @@ def main():
             boundaries=False,
             title=f"Loss history (nbins={nbins})"
         )
-        regularisation_plot_name = f"examples/toy_example/Plots/history_penalty_{nbins}bins.pdf"
+        regularisation_plot_name = path_plots + f"history_penalty_{nbins}bins.pdf"
         plot_history(
             history_data=regularisation_history,
             output_filename=regularisation_plot_name,
@@ -284,7 +284,7 @@ def main():
         )
 
         # Plot the boundary evolution
-        bndry_plot_name = f"examples/toy_example/Plots/history_boundaries_{nbins}bins.pdf"
+        bndry_plot_name = path_plots + f"history_boundaries_{nbins}bins.pdf"
         plot_history(
             history_data=boundary_history,
             output_filename=bndry_plot_name,
@@ -303,11 +303,11 @@ def main():
     ax_comp.plot(gato_binning_options, opt_Z_vals, marker='s', linestyle='--', label="GATO binning")
     ax_comp.set_xlabel("Number of bins", fontsize=22)
     ax_comp.set_ylabel("Overall significance", fontsize=22)
-    ax_comp.legend(fontsize=12)
+    ax_comp.legend(fontsize=18)
     ax_comp.set_xlim(0, ax_comp.get_xlim()[1])
     ax_comp.set_ylim(0, ax_comp.get_ylim()[1])
     plt.tight_layout()
-    comp_plot_filename = "examples/toy_example/Plots/significanceComparison.pdf"
+    comp_plot_filename = path_plots + "significanceComparison.pdf"
     fig_comp.savefig(comp_plot_filename)
     plt.close(fig_comp)
     print(f"Comparison plot saved as {comp_plot_filename}")
