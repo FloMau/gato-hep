@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import mplhep as hep  # assuming you use mplhep for histplot
 plt.style.use(hep.style.ROOT)
+import tensorflow as tf
 
 
 def plot_stacked_histograms(
@@ -217,4 +218,87 @@ def plot_history(
     fig.tight_layout()
     os.makedirs(os.path.dirname(output_filename), exist_ok=True)
     fig.savefig(output_filename)
+    plt.close(fig)
+
+from matplotlib.patches import Ellipse
+
+def plot_learned_gaussians(data, model, dim_x, dim_y, output_filename, conf_level=2.30, order=None):
+    """
+    Plot the learned Gaussian components of the model (projected to two specified dimensions)
+    together with the data (scatter plot).
+    
+    Parameters:
+      data: dict mapping process name -> pandas DataFrame with column "NN_output"
+            where each entry is an array-like of shape (dim,).
+      model: trained DiffCatModelMultiDimensional (or similar) with method get_effective_parameters()
+      dim_x, dim_y: integers specifying which dimensions to plot (e.g., 0 and 1)
+      output_filename: file name to save the plot.
+      conf_level: chi-square threshold for the ellipse contour; for 2D, 2.30 ~ 68% (1 sigma)
+      
+    The function will:
+      - Retrieve the learned parameters (mixture weights, means, scale_tril).
+      - Compute the covariance for each Gaussian as cov = L L^T.
+      - Project each Gaussian to the (dim_x, dim_y) plane.
+      - Compute the 1σ ellipse (using the eigen-decomposition of the projected covariance).
+      - Scatter-plot the data (using all events, projected to (dim_x, dim_y)).
+      - Overlay the ellipse contours.
+    """
+    # Retrieve effective parameters from the model.
+    eff_params = model.get_effective_parameters()
+    means = np.array(eff_params["means"])    # shape: (n_cats, dim)
+    scale_tril = np.array(eff_params["scale_tril"])  # shape: (n_cats, dim, dim)
+    # Number of components.
+    n_cats = means.shape[0]
+
+    if order is None:
+        order = [_i for _i in range(n_cats)]
+    
+    # Compute covariances for each component.
+    covariances = np.array([np.dot(L, L.T) for L in scale_tril])
+    
+    # Prepare figure.
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    # Scatter-plot the data.
+    # We plot all processes, using a different marker/color per process.
+    colors = {"signal": "tab:red", "bkg1": "tab:blue", "bkg2": "tab:orange", "bkg3": "tab:cyan"}
+    markers = {"signal": "o", "bkg1": "s", "bkg2": "v", "bkg3": "d"}
+    stop = 1000
+    for proc, df in data.items():
+        # Assume each entry in df["NN_output"] is an array-like of length >= max(dim_x, dim_y)+1.
+        arr = np.stack(df["NN_output"].values)  # shape: (n_events, dim)
+        x_vals = arr[:, dim_x]
+        y_vals = arr[:, dim_y]
+        ax.scatter(x_vals[:stop], y_vals[:stop], s=10, alpha=0.5, label=proc, color=colors.get(proc, "gray"), marker=markers.get(proc, "o"))
+
+    # Plot the 1σ ellipses for each learned Gaussian.
+    prop_cycle = plt.rcParams["axes.prop_cycle"]
+    colors = prop_cycle.by_key()["color"]
+    linestyles = ["solid", "dashed", "dotted"]
+    n_colors = len(colors)
+    colors *= 10
+
+    for i in range(n_cats):
+        # Project mean and covariance to the desired dimensions.
+        mu = tf.nn.softmax(means[i]).numpy()[[dim_x, dim_y]]  # shape: (2,)
+
+        cov_proj = covariances[i][np.ix_([dim_x, dim_y], [dim_x, dim_y])]
+        # Compute eigenvalues and eigenvectors.
+        eigenvals, eigenvecs = np.linalg.eigh(cov_proj)
+        # The angle of the ellipse is the angle of the largest eigenvector.
+        angle = np.degrees(np.arctan2(eigenvecs[1, 1], eigenvecs[0, 1]))
+        # Width and height are given by 2*sqrt(conf_level*eigenvalue).
+        width = 2 * np.sqrt(conf_level * eigenvals[1])
+        height = 2 * np.sqrt(conf_level * eigenvals[0])
+        ellipse = Ellipse(xy=mu, width=width, height=height, angle=angle, linestyle=linestyles[i//n_colors],
+                          edgecolor=colors[i], fc='none', lw=3, label=f'Gaussian {order[i]}')
+        ax.add_patch(ellipse)
+    
+    ax.set_xlabel(f"Dimension {dim_x}", fontsize=18)
+    ax.set_ylabel(f"Dimension {dim_y}", fontsize=18)
+    ax.set_xlim(-0.3, 1.3)
+    ax.set_ylim(-0.3, 1.3)
+    ax.legend(fontsize=14)
+    plt.tight_layout()
+    plt.savefig(output_filename)
     plt.close(fig)

@@ -1,4 +1,8 @@
 import tensorflow as tf
+import tensorflow_probability as tfp
+import numpy as np
+
+tfd = tfp.distributions
 
 def asymptotic_significance(S, B, eps=1e-9):
     """
@@ -106,7 +110,7 @@ class DifferentiableCutModel(tf.Module):
           - "name": str, the name of the column in the data
           - "n_cats": int, number of categories for this variable
           - optionally "steepness": float for the soft cut transitions (defaults to 50)
-        
+
         significance_func: function S, B -> significance
         """
         super().__init__(name=name)
@@ -118,7 +122,7 @@ class DifferentiableCutModel(tf.Module):
         for var_cfg in variables_config:
             n_cats = var_cfg["n_cats"]
             shape = (n_cats,) if n_cats > 1 else (0,) # in current implementation, the last value is 1, i.e., will be ignored
-            
+
             init_tensor = tf.random.normal(shape=shape, stddev=0.3)
             raw_var = tf.Variable(init_tensor, trainable=True, name=f"raw_bndry_{var_cfg['name']}")
             self.raw_boundaries_list.append(raw_var)
@@ -127,7 +131,7 @@ class DifferentiableCutModel(tf.Module):
         """
         For each process in data_dict, we retrieve the relevant columns
         and apply the soft cut membership for each variable in self.variables_config.
-        
+
         Then we combine membership from all variables. 
         (For simpler usage, we might do "product" of memberships or "logical" approach.)
 
@@ -147,3 +151,77 @@ class DifferentiableCutModel(tf.Module):
                 # out[var_cfg["name"]] = tf.sort(tf.sigmoid(raw_var)).numpy().tolist()
                 out[var_cfg["name"]] = calculate_boundaries(raw_var)
         return out
+
+
+class DiffCatModelMultiDimensional(DifferentiableCutModel):
+    """
+    A differentiable category model based on a Gaussian mixture.
+
+    The model learns, for each of n_cats:
+      - mixture_logits (which give the mixing weights),
+      - mean vector (of dimension 'dim'),
+      - an unconstrained lower-triangular matrix that is transformed into a 
+        positive-definite Cholesky factor for the covariance.
+
+    The per-event soft membership is computed by evaluating the log pdf of each
+    Gaussian at the event's feature vector and adding the log mixture weight.
+    A temperatured softmax is then applied.
+
+    The call() method loops over processes in data_dict (a dict of pandas DataFrames
+    with columns "NN_output" (an array-like of shape [dim]) and "weight"), computes 
+    soft memberships, accumulates yields, and returns the negative overall significance
+    as loss (plus background yields).
+    """
+    def __init__(self, n_cats, dim, temperature=1.0, name="DiffCatModelMultiDimensional"):
+        # Here, we don't use the 1D boundaries. We use our own parameters.
+        super().__init__(variables_config=[{"name": "NN_output", "n_cats": n_cats}], name=name)
+        self.n_cats = n_cats
+        self.dim = dim
+        self.temperature = temperature
+
+        # Mixture logits (shape: [n_cats])
+        self.mixture_logits = tf.Variable(tf.random.normal([n_cats], stddev=0.3), trainable=True, name="mixture_logits")
+
+        # Means (shape: [n_cats, dim])
+        # self.raw_means = tf.Variable(tf.random.normal([n_cats, dim], stddev=0.3), trainable=True, name="raw_means")
+        # self.means = tf.Variable(tf.nn.sigmoid(self.raw_means), trainable=True)
+        self.means = tf.Variable(tf.random.normal([n_cats, dim], mean=0., stddev=1), trainable=True, name="means")
+
+        # Unconstrained lower triangular matrices (shape: [n_cats, dim, dim])
+        initial_L = np.array([1/self.n_cats*np.eye(dim) for _ in range(n_cats)], dtype=np.float32)
+        self.unconstrained_L = tf.Variable(
+            tf.random.normal([n_cats, dim, dim], mean=0.0, stddev=1/self.n_cats) + initial_L,
+            trainable=True,
+            name="unconstrained_L"
+        )
+
+    def get_scale_tril(self):
+        """
+        Returns the Cholesky factors (lower-triangular with positive diagonal) for each category.
+        """
+        L = tf.linalg.band_part(self.unconstrained_L, -1, 0)
+        # print("L before:", L)
+        # L = tf.nn.sigmoid(L) # constrain the covariances of the Gaussians
+        # print("L after:", L)
+        diag = tf.linalg.diag_part(L)
+        # print("Diag", diag)
+        # diag_positive = tf.nn.relu(diag)
+        diag_positive = 1/self.n_cats * tf.nn.softplus(diag)
+        # print("Diag pos", diag_positive)
+        # print("return:", tf.linalg.set_diag(L, diag_positive))
+        return tf.linalg.set_diag(L, diag_positive)
+
+    def call(self, data_dict):
+        raise NotImplementedError(
+            "Base class: user must override the `call` method to define how yields are computed, to match the analysis specific needs! Examples are in /examples."
+        )
+
+    def get_effective_parameters(self):
+        """
+        Returns the learned mixture weights, means, and covariance factors.
+        """
+        return {
+            "mixture_weights": tf.nn.softmax(self.mixture_logits).numpy().tolist(),
+            "means": self.means.numpy().tolist(),
+            "scale_tril": self.get_scale_tril().numpy().tolist()
+        }
