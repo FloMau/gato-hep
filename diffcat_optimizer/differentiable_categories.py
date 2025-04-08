@@ -180,17 +180,20 @@ class DiffCatModelMultiDimensional(DifferentiableCutModel):
         self.temperature = temperature
 
         # Mixture logits (shape: [n_cats])
-        self.mixture_logits = tf.Variable(tf.random.normal([n_cats], stddev=0.3), trainable=True, name="mixture_logits")
+        self.mixture_logits = tf.Variable(tf.random.normal([n_cats], stddev=0.1), trainable=True, name="mixture_logits")
 
         # Means (shape: [n_cats, dim])
         # self.raw_means = tf.Variable(tf.random.normal([n_cats, dim], stddev=0.3), trainable=True, name="raw_means")
         # self.means = tf.Variable(tf.nn.sigmoid(self.raw_means), trainable=True)
-        self.means = tf.Variable(tf.random.normal([n_cats, dim], mean=0., stddev=1), trainable=True, name="means")
+        self.means = tf.Variable(tf.random.normal([n_cats, dim], mean=0., stddev=2), trainable=True, name="means")
 
         # Unconstrained lower triangular matrices (shape: [n_cats, dim, dim])
-        initial_L = np.array([1/self.n_cats*np.eye(dim) for _ in range(n_cats)], dtype=np.float32)
+        initial_L = np.array(
+            [1/(2*self.n_cats ** (1/self.dim)) * np.eye(dim) for _ in range(n_cats)],
+            dtype=np.float32
+        )
         self.unconstrained_L = tf.Variable(
-            tf.random.normal([n_cats, dim, dim], mean=0.0, stddev=1/self.n_cats) + initial_L,
+            tf.random.normal([n_cats, dim, dim], mean=0.0, stddev=1/(10*self.n_cats ** (1/self.dim))) + initial_L,
             trainable=True,
             name="unconstrained_L"
         )
@@ -206,10 +209,11 @@ class DiffCatModelMultiDimensional(DifferentiableCutModel):
         diag = tf.linalg.diag_part(L)
         # print("Diag", diag)
         # diag_positive = tf.nn.relu(diag)
-        diag_positive = 1/self.n_cats * tf.nn.softplus(diag)
+        # diag_positive = 1/np.sqrt(self.n_cats) * tf.nn.softplus(diag)
+        diag_positive = 1/(2*self.n_cats ** (1/self.dim)) * tf.nn.softplus(diag - 1)
         # print("Diag pos", diag_positive)
         # print("return:", tf.linalg.set_diag(L, diag_positive))
-        return tf.linalg.set_diag(L, diag_positive)
+        return tf.linalg.set_diag(0*L, diag_positive)
 
     def call(self, data_dict):
         raise NotImplementedError(
