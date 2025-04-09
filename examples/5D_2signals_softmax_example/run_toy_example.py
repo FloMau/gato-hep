@@ -92,6 +92,20 @@ def create_hist(data, weights=None, bins=50, low=0.0, high=1.0, name="Projection
         h.fill(data)
     return h
 
+def convert_data_to_tensors(data):
+    """
+    Convert the dictionary of DataFrames (with 'NN_output' and 'weight')
+    into a dictionary of dictionaries containing TF tensors.
+    This conversion is done once and passed to the training function.
+    """
+    tensor_data = {}
+    for proc, df in data.items():
+        tensor_data[proc] = {
+            "NN_output": tf.constant(np.stack(df["NN_output"].values), dtype=tf.float32),
+            "weight": tf.constant(df["weight"].values, dtype=tf.float32)
+        }
+    return tensor_data
+
 # ------------------------------------------------------------------------------
 # Overall significance from histograms (same as before).
 # ------------------------------------------------------------------------------
@@ -106,98 +120,83 @@ def compute_significance(h_signal, h_bkg_list):
 # ------------------------------------------------------------------------------
 # Differentiable model: subclass that optimizes a Gaussian mixture for 5D NN output.
 # ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Differentiable model: DiffCatModelExample5D
+# ------------------------------------------------------------------------------
 class DiffCatModelExample5D(DiffCatModelMultiDimensional):
     """
-    Inherits from DiffCatModelMultiDimensional using the full 5D NN output.
+    Inherits from DiffCatModelMultiDimensional with full 5D NN output.
     
-    For training the model, we define two channels:
-      - Channel 1 (signal1): signal is only events from process "signal1" that have 
-        argmax over the first two components equal to 0; background is all events from 
-        other processes and from "signal2".
-      - Channel 2 (signal2): signal is only events from process "signal2" that have 
-        argmax equal to 1; background is all events from other processes and from "signal1".
+    For training, we define two channels:
+      - Channel 1 (signal1): signal events are those from "signal1",
+        background events include all events from other processes and from "signal2".
+      - Channel 2 (signal2): signal events are those from "signal2",
+        background events include all events from other processes and from "signal1".
     
-    The loss is defined as the negative geometric mean:
-      loss = -sqrt(Z1 * Z2)
-    where Z1 = S1/sqrt(B1) and Z2 = S2/sqrt(B2).
+    Loss = -sqrt(Z1 * Z2), where
+      Z1 = S1/sqrt(B1) and Z2 = S2/sqrt(B2).
     """
     def call(self, data_dict):
         n_cats = self.n_cats
-        log_mix = tf.nn.log_softmax(self.mixture_logits)   # shape: (n_cats,)
-        scale_tril = self.get_scale_tril()                  # shape: (n_cats, dim, dim)
-        means = self.means                                  # shape: (n_cats, dim)
+        log_mix = tf.nn.log_softmax(self.mixture_logits)
+        scale_tril = self.get_scale_tril()
+        means = self.means
 
-        # Initialize yield vectors as TensorFlow tensors.
         sig1_yields = tf.zeros([n_cats], dtype=tf.float32)
         sig2_yields = tf.zeros([n_cats], dtype=tf.float32)
         bkg_yields  = tf.zeros([n_cats], dtype=tf.float32)
 
-        # Loop over all processes.
-        for proc, df in data_dict.items():
-            if df.empty:
-                continue
-            # Get event data as TF tensors.
-            x = tf.constant(np.stack(df["NN_output"].values), dtype=tf.float32)  # shape: (n_events, 5)
-            w = tf.constant(df["weight"].values, dtype=tf.float32)  # shape: (n_events,)
-
-            # Compute soft memberships per bin.
+        # Loop over processes (data_dict now contains tensors).
+        for proc, tensors in data_dict.items():
+            x = tensors["NN_output"]  # shape: (n_events, 5)
+            w = tensors["weight"]     # shape: (n_events,)
             log_probs = []
             for i in range(n_cats):
                 dist = tfd.MultivariateNormalTriL(
                     loc=tf.nn.softmax(means[i]),
                     scale_tril=scale_tril[i]
                 )
-                lp = dist.log_prob(x)  # shape: (n_events,)
+                lp = dist.log_prob(x)
                 log_probs.append(lp)
-            log_probs = tf.stack(log_probs, axis=1)  # shape: (n_events, n_cats)
-            log_joint = log_probs + log_mix         # shape: (n_events, n_cats)
+            log_probs = tf.stack(log_probs, axis=1)
+            log_joint = log_probs + log_mix
             memberships = tf.nn.softmax(log_joint / self.temperature, axis=1)
-            # print(memberships)
-            # exit()
-            proc_yields = tf.reduce_sum(memberships * tf.expand_dims(w, axis=1), axis=0)  # shape: (n_cats,)
-
+            proc_yields = tf.reduce_sum(memberships * tf.expand_dims(w, axis=1), axis=0)
             if proc == "signal1":
                 sig1_yields += proc_yields
             elif proc == "signal2":
                 sig2_yields += proc_yields
             else:
-                # For background processes, add the entire yield.
                 bkg_yields += proc_yields
-
-        # For channel 1:
-        #   Signal: yield from signal1 events.
-        #   Background: bkg yield plus yield from signal2 events.
+        
         S1 = sig1_yields
         B1 = bkg_yields + sig2_yields
         Z1_bins = asymptotic_significance(S1, B1)
-
         Z1_overall = tf.sqrt(tf.reduce_sum(tf.square(Z1_bins)))
-
-        # For channel 2:
-        #   Signal: yield from signal2 events.
-        #   Background: bkg yield plus yield from signal1 events.
+        
         S2 = sig2_yields
         B2 = bkg_yields + sig1_yields
         Z2_bins = asymptotic_significance(S2, B2)
-
         Z2_overall = tf.sqrt(tf.reduce_sum(tf.square(Z2_bins)))
-
+        
         loss = - tf.sqrt(Z1_overall * Z2_overall)
-        # loss = -(Z1_overall + Z2_overall)
-        return loss, tf.constant(tf.reduce_sum(bkg_yields), dtype=tf.float32)
+        return loss, tf.reduce_sum(bkg_yields)
 
+# ------------------------------------------------------------------------------
+# Training step wrapped in @tf.function.
+# ------------------------------------------------------------------------------
 @tf.function
 def train_step(model, data, optimizer, lam=0.0):
     with tf.GradientTape() as tape:
         loss, B = model.call(data)
         total_loss = loss
+        reg = tf.constant(0.0, dtype=tf.float32)
         if lam != 0:
             reg = low_bkg_penalty(B, threshold=10, steepness=10)
             total_loss += lam * reg
     grads = tape.gradient(total_loss, model.trainable_variables)
     optimizer.apply_gradients(zip(grads, model.trainable_variables))
-    return total_loss
-
+    return total_loss, loss, reg
 
 # ------------------------------------------------------------------------------
 # Main: Run baseline fixed binning and differentiable optimization for 5D.
@@ -231,7 +230,7 @@ def main():
         baseline_assignments[proc] = assignments
 
     # Define the binning options.
-    baseline_binning_options = [2, 3, 5, 10]
+    baseline_binning_options = [2, 5, 10]
     baseline_signif_signal1 = {}
     baseline_signif_signal2 = {}
 
@@ -315,35 +314,29 @@ def main():
                 print(f"Saved {sig_name} baseline histogram ({scale_tag}) for {nbins} bins as {output_filename}")
 
     # ----- Optimization: learn the Gaussian mixture clustering for 5D -----
-    path_plots_opt = "examples/5D_2signals_softmax_example/Plots/gato/"
+    path_plots_opt = "examples/5D_2signals_softmax_example/Plots/gatoTensor/"
     os.makedirs(path_plots_opt, exist_ok=True)
     # Use the full 5D output.
     Z1_gato = {}
     Z2_gato = {}
-    gato_binning_options = [50]
+    gato_binning_options = [25]
+    tensor_data = convert_data_to_tensors(data)
     for n_cats in gato_binning_options:
         model = DiffCatModelExample5D(n_cats=n_cats, dim=5, temperature=0.1)
-        lam = 0.
         optimizer = tf.keras.optimizers.Adam(learning_rate=0.05)
+        lam = 0.0
 
         loss_history = []
         reg_history = []
         param_history = []
-        epochs = 100
-        for epoch in range(epochs):
-            with tf.GradientTape() as tape:
-                loss, B = model.call(data)
-                reg = tf.Variable(np.array([0]))
-                total_loss = loss
-                if lam != 0:
-                    reg = low_bkg_penalty(B, threshold=10, steepness=10)
-                    total_loss += lam * reg
-            grads = tape.gradient(total_loss, model.trainable_variables)
-            optimizer.apply_gradients(zip(grads, model.trainable_variables))
+        epochs = 50
 
-            # loss = train_step(model, data, optimizer, lam=lam)
-            # print(f"Epoch {epoch}, Loss: {loss.numpy()}")
+        for epoch in range(epochs):
+            total_loss, loss, reg = train_step(model, tensor_data, optimizer, lam=lam)
             loss_history.append(loss.numpy())
+            if epoch % 5 == 0 or epoch == epochs - 1:
+                print(f"[Epoch {epoch}] total_loss = {loss.numpy():.3f}")
+            
             reg_history.append(reg.numpy())
             # reg_history.append(0)
             param_history.append(model.get_effective_parameters())
