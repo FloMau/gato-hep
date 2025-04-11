@@ -168,35 +168,19 @@ class DiffCatModelExample5D(DiffCatModelMultiDimensional):
                 sig2_yields += proc_yields
             else:
                 bkg_yields += proc_yields
-        
+
         S1 = sig1_yields
         B1 = bkg_yields + sig2_yields
         Z1_bins = asymptotic_significance(S1, B1)
         Z1_overall = tf.sqrt(tf.reduce_sum(tf.square(Z1_bins)))
-        
+
         S2 = sig2_yields
         B2 = bkg_yields + sig1_yields
         Z2_bins = asymptotic_significance(S2, B2)
         Z2_overall = tf.sqrt(tf.reduce_sum(tf.square(Z2_bins)))
-        
+
         loss = - tf.sqrt(Z1_overall * Z2_overall)
         return loss, tf.reduce_sum(bkg_yields)
-
-# ------------------------------------------------------------------------------
-# Training step wrapped in @tf.function.
-# ------------------------------------------------------------------------------
-@tf.function
-def train_step(model, data, optimizer, lam=0.0):
-    with tf.GradientTape() as tape:
-        loss, B = model.call(data)
-        total_loss = loss
-        reg = tf.constant(0.0, dtype=tf.float32)
-        if lam != 0:
-            reg = low_bkg_penalty(B, threshold=10, steepness=10)
-            total_loss += lam * reg
-    grads = tape.gradient(total_loss, model.trainable_variables)
-    optimizer.apply_gradients(zip(grads, model.trainable_variables))
-    return total_loss, loss, reg
 
 # ------------------------------------------------------------------------------
 # Main: Run baseline fixed binning and differentiable optimization for 5D.
@@ -242,49 +226,41 @@ def main():
     for nbins in baseline_binning_options:
         # --- For signal1 baseline ---
         # Use events with argmax==0.
-        # Signal1: events from "signal1" with assignment==0.
-        mask_sig1 = baseline_assignments["signal1"] == 0
-        sig1_vals = np.stack(data["signal1"]["NN_output"].values)[:, 0][mask_sig1]
-        sig1_weights = data["signal1"]["weight"].values[mask_sig1]
-        h_signal1 = create_hist(sig1_vals, weights=sig1_weights, bins=nbins, low=0.0, high=1.0, name="Signal1_baseline")
         # Background for signal1: events from all processes (including signal2 and backgrounds) with argmax==0.
         bkg_hists_sig1 = []
         bkg_labels_sig1 = []
         for proc, df in data.items():
-            if proc == "signal1":
-                continue
             mask = baseline_assignments[proc] == 0
             if np.sum(mask) == 0:
                 continue
             vals = np.stack(df["NN_output"].values)[:, 0][mask]
             weights = df["weight"].values[mask]
-            h = create_hist(vals, weights=weights, bins=nbins, low=0.2, high=1.0, name=proc)
-            bkg_hists_sig1.append(h)
-            bkg_labels_sig1.append(proc)
+            if proc == "signal1":
+                h_signal1 = create_hist(vals, weights=weights, bins=nbins, low=0.2, high=1.0, name=proc)
+            else:
+                h = create_hist(vals, weights=weights, bins=nbins, low=0.2, high=1.0, name=proc)
+                bkg_hists_sig1.append(h)
+                bkg_labels_sig1.append(proc)
         # Compute significance for signal1 channel.
         Z1_baseline = compute_significance(h_signal1, bkg_hists_sig1)
         baseline_signif_signal1[nbins] = Z1_baseline
 
         # --- For signal2 baseline ---
         # Use events with argmax==1.
-        mask_sig2 = baseline_assignments["signal2"] == 1
-        sig2_vals = np.stack(data["signal2"]["NN_output"].values)[:, 1][mask_sig2]
-        sig2_weights = data["signal2"]["weight"].values[mask_sig2]
-        h_signal2 = create_hist(sig2_vals, weights=sig2_weights, bins=nbins, low=0.0, high=1.0, name="Signal2_baseline")
-        # Background for signal2: events from all processes (including signal1 and backgrounds) with argmax==1.
         bkg_hists_sig2 = []
         bkg_labels_sig2 = []
         for proc, df in data.items():
-            if proc == "signal2":
-                continue
             mask = baseline_assignments[proc] == 1
             if np.sum(mask) == 0:
                 continue
             vals = np.stack(df["NN_output"].values)[:, 1][mask]
             weights = df["weight"].values[mask]
-            h = create_hist(vals, weights=weights, bins=nbins, low=0.2, high=1.0, name=proc)
-            bkg_hists_sig2.append(h)
-            bkg_labels_sig2.append(proc)
+            if proc == "signal2":
+                h_signal2 = create_hist(vals, weights=weights, bins=nbins, low=0.2, high=1.0, name=proc)
+            else:
+                h = create_hist(vals, weights=weights, bins=nbins, low=0.2, high=1.0, name=proc)
+                bkg_hists_sig2.append(h)
+                bkg_labels_sig2.append(proc)
         Z2 = compute_significance(h_signal2, bkg_hists_sig2)
         baseline_signif_signal2[nbins] = Z2
 
@@ -314,35 +290,54 @@ def main():
                 print(f"Saved {sig_name} baseline histogram ({scale_tag}) for {nbins} bins as {output_filename}")
 
     # ----- Optimization: learn the Gaussian mixture clustering for 5D -----
-    path_plots_opt = "examples/5D_2signals_softmax_example/Plots/gatoTensor/"
+    path_plots_opt = "examples/5D_2signals_softmax_example/Plots/gato/"
     os.makedirs(path_plots_opt, exist_ok=True)
     # Use the full 5D output.
     Z1_gato = {}
     Z2_gato = {}
-    gato_binning_options = [25]
+    gato_binning_options = [5, 10, 15]
     tensor_data = convert_data_to_tensors(data)
     for n_cats in gato_binning_options:
-        model = DiffCatModelExample5D(n_cats=n_cats, dim=5, temperature=0.1)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.05)
+
+        # ------------------------------------------------------------------------------
+        # Training step wrapped in @tf.function.
+        # ------------------------------------------------------------------------------
+        @tf.function
+        def train_step(model, data, optimizer, lam=0.0):
+            with tf.GradientTape() as tape:
+                loss, B = model.call(data)
+                total_loss = loss
+                reg = tf.constant(0.0, dtype=tf.float32)
+                if lam != 0:
+                    reg = low_bkg_penalty(B, threshold=10, steepness=10)
+                    total_loss += lam * reg
+            grads = tape.gradient(total_loss, model.trainable_variables)
+            optimizer.apply_gradients(zip(grads, model.trainable_variables))
+            return total_loss, loss, reg
+
+        model = DiffCatModelExample5D(n_cats=n_cats, dim=5, temperature=1)
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.02)
         lam = 0.0
 
         loss_history = []
         reg_history = []
         param_history = []
-        epochs = 50
+        epochs = 150
 
         for epoch in range(epochs):
             total_loss, loss, reg = train_step(model, tensor_data, optimizer, lam=lam)
             loss_history.append(loss.numpy())
             if epoch % 5 == 0 or epoch == epochs - 1:
                 print(f"[Epoch {epoch}] total_loss = {loss.numpy():.3f}")
-            
+
             reg_history.append(reg.numpy())
-            # reg_history.append(0)
             param_history.append(model.get_effective_parameters())
             if epoch % 5 == 0 or epoch == epochs - 1:
                 print(f"[Epoch {epoch}] total_loss={total_loss.numpy():.3f}, base_loss={loss.numpy():.3f}")
                 print(model.get_effective_parameters())
+
+            # if epoch > 0 and epoch % 20 == 0:
+            #     model.temperature /= 2
 
         # Retrieve effective parameters.
         eff_params = model.get_effective_parameters()
