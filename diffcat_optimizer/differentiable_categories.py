@@ -213,7 +213,7 @@ class DiffCatModelMultiDimensional(DifferentiableCutModel):
         diag_positive = 1/(2*self.n_cats ** (1/self.dim)) * tf.nn.softplus(diag - 1)
         # print("Diag pos", diag_positive)
         # print("return:", tf.linalg.set_diag(L, diag_positive))
-        return tf.linalg.set_diag(0*L, diag_positive)
+        return tf.linalg.set_diag(0.1*L, diag_positive)
 
     def call(self, data_dict):
         raise NotImplementedError(
