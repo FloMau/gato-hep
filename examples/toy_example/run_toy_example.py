@@ -294,7 +294,6 @@ def main():
             title=f"Boundary evolution (nbins={nbins})"
         )
 
-
     # --- Comparison plot ---
     fig_comp, ax_comp = plt.subplots(figsize=(8, 6))
     Z_equidistant_vals = [equidistant_significances[nb] for nb in equidistant_binning_options]
