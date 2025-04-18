@@ -295,7 +295,7 @@ def main():
     # Use the full 5D output.
     Z1_gato = {}
     Z2_gato = {}
-    gato_binning_options = [5, 10, 15]
+    gato_binning_options = [3, 25]
     tensor_data = convert_data_to_tensors(data)
     for n_cats in gato_binning_options:
 
@@ -322,7 +322,7 @@ def main():
         loss_history = []
         reg_history = []
         param_history = []
-        epochs = 150
+        epochs = 250
 
         for epoch in range(epochs):
             total_loss, loss, reg = train_step(model, tensor_data, optimizer, lam=lam)
@@ -336,8 +336,8 @@ def main():
                 print(f"[Epoch {epoch}] total_loss={total_loss.numpy():.3f}, base_loss={loss.numpy():.3f}")
                 print(model.get_effective_parameters())
 
-            # if epoch > 0 and epoch % 20 == 0:
-            #     model.temperature /= 2
+            if epoch > 0 and epoch % 20 == 0:
+                model.temperature /= 2
 
         # Retrieve effective parameters.
         eff_params = model.get_effective_parameters()
@@ -424,13 +424,12 @@ def main():
     sig1_values_gato = [Z1_gato[nb] for nb in gato_binning_options]
     sig2_values_gato = [Z2_gato[nb] for nb in gato_binning_options]
 
-    ax.plot(2*np.array(baseline_binning_options)+1, sig1_values_baseline, marker='o', linestyle='-', label="Baseline Signal1")
-    ax.plot(2*np.array(baseline_binning_options)+1, sig2_values_baseline, marker='s', linestyle='--', label="Baseline Signal2")
-    ax.plot(gato_binning_options, sig1_values_gato, marker='o', linestyle='-', label="GATO Signal1")
-    ax.plot(gato_binning_options, sig2_values_gato, marker='s', linestyle='--', label="GATO Signal2")
+    ax.plot(2*np.array(baseline_binning_options)+1, sig1_values_baseline, marker='o', linestyle='-', label="Equidistant binning signal 1")
+    ax.plot(2*np.array(baseline_binning_options)+1, sig2_values_baseline, marker='s', linestyle='--', label="Equidistant binning signal 2")
+    ax.plot(gato_binning_options, sig1_values_gato, marker='o', linestyle='-', label="GATO binning signal 1")
+    ax.plot(gato_binning_options, sig2_values_gato, marker='s', linestyle='--', label="GATO binning signal 2")
     ax.set_xlabel("Number of bins", fontsize=16)
-    ax.set_ylabel("Significance (S/sqrt(B))", fontsize=16)
-    ax.set_title("Baseline Significance vs. Binning", fontsize=18)
+    ax.set_ylabel("Significance", fontsize=16)
     ax.legend(fontsize=14)
     plt.tight_layout()
     comp_filename = os.path.join(path, "significance_comparison.pdf")

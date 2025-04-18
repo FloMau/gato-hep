@@ -12,7 +12,7 @@ if repo_root not in sys.path:
 
 from diffcat_optimizer.plotting_utils import plot_stacked_histograms, plot_history
 from diffcat_optimizer.differentiable_categories import asymptotic_significance, soft_bin_weights, DifferentiableCutModel, low_bkg_penalty, calculate_boundaries
-from generate_toy_data import generate_toy_data
+from generate_toy_data import generate_toy_data_gauss
 
 # ------------------------------------------------------------------------------
 # Helper: Create a fixed histogram from 1D data.
@@ -42,6 +42,20 @@ def compute_significance(h_signal, h_bkg_list):
     Z_bins = asymptotic_significance(S_tensor, B_tensor)
     Z_overall = np.sqrt(np.sum(Z_bins.numpy()**2))
     return Z_overall
+
+# --- 1) a tiny helper, run ONCE up‑front in main(): ---
+def df_dict_to_tensors(data_dict):
+    """
+    Input:  data_dict: proc_name -> pandas.DataFrame with columns "NN_output","weight"
+    Output: tensor_data: proc_name -> {"x": tf.Tensor, "w": tf.Tensor}
+    """
+    tensor_data = {}
+    for proc, df in data_dict.items():
+        tensor_data[proc] = {
+            col: tf.constant(df[col].values, dtype=tf.float32) for col in df.columns
+        }
+    return tensor_data
+
 
 # ------------------------------------------------------------------------------
 # Differentiable model: subclass that optimizes bin boundaries on one-dimensional discriminant.
@@ -88,18 +102,49 @@ class one_dimensional_binning_optimiser(DifferentiableCutModel):
         Z_bins = asymptotic_significance(S, B)
         Z_overall = tf.sqrt(tf.reduce_sum(tf.square(Z_bins)))
         return -Z_overall, B  # Return negative significance as loss, B for penalty
+    
+    @tf.function
+    def call(self, tensor_data):
+        # tensor_data: proc_name -> {"x": <tf.Tensor [N]>, "w": <tf.Tensor [N]>}
+
+        raw_boundaries = self.raw_boundaries_list[0]
+        steep         = self.variables_config[0]["steepness"]
+        n_cats        = self.variables_config[0]["n_cats"]
+
+        # accumulate in Python lists, but these hold tf.Tensor scalars
+        S = [tf.constant(0.0) for _ in range(n_cats)]
+        B = [tf.constant(0.0) for _ in range(n_cats)]
+
+        for proc, t in tensor_data.items():
+            x = t["NN_output"]   # shape [N]
+            w = t["weight"]   # shape [N]
+            # get list of [n_cats] soft‐membership vectors, each [N]
+            memberships = soft_bin_weights(x, raw_boundaries, steepness=steep)
+            for i, m in enumerate(memberships):
+                y = tf.reduce_sum(m * w)
+                if proc == "signal":
+                    S[i] += y
+                else:
+                    B[i] += y
+
+        S = tf.stack(S)
+        B = tf.stack(B)
+
+        Z_bins = asymptotic_significance(S, B) # shape [n_cats]
+        Z_tot  = tf.sqrt(tf.reduce_sum(tf.square(Z_bins)))  # scalar
+
+        return -Z_tot, B
 
 # ------------------------------------------------------------------------------
 # Main: Generate data, run fixed binning and optimization, then compare.
 # ------------------------------------------------------------------------------
 def main():
     # 1. Generate toy data
-    data = generate_toy_data(
+    data = generate_toy_data_gauss(
         n_signal=100000,
         n_bkg1=200000, n_bkg2=100000, n_bkg3=100000,
-        lam_signal = 6, lam_bkg1=8, lam_bkg2=6, lam_bkg3=3,
         xs_signal=0.5,    # 500 fb = 0.5 pb
-        xs_bkg1=50, xs_bkg2=15, xs_bkg3=1,
+        xs_bkg1=50, xs_bkg2=15, xs_bkg3=10,
         lumi=100,         # in /fb
         seed=42
     )
@@ -116,11 +161,11 @@ def main():
 
     # plot the backgrounds:
     process_labels = ["Background 1", "Background 2", "Background 3"]
-    signal_labels = ["Signal x 10"]
+    signal_labels = ["Signal x 100"]
 
     # For demonstration, we compare multiple binning schemes.
-    equidistant_binning_options = [2, 5, 10, 15, 20, 30]
-    gato_binning_options = [2, 5, 10, 15, 20, 30]
+    equidistant_binning_options = [2, 5, 10, 20]
+    gato_binning_options = [3, 5, 10, 20]
     equidistant_significances = {}
     optimized_significances = {}
 
@@ -130,20 +175,20 @@ def main():
     plot_stacked_histograms(
         stacked_hists=[bkg_hist[::hist.rebin(30)] for bkg_hist in bkg_hists],
         process_labels=process_labels,
-        signal_hists=[hist_signal[::hist.rebin(30)] * 10],
+        signal_hists=[hist_signal[::hist.rebin(30)] * 100],
         signal_labels=signal_labels,
         output_filename=fixed_plot_filename,
-        axis_labels=("Toy NN output", "Toy events"),
+        axis_labels=("Toy discriminant", "Events"),
         normalize=False,
         log=False
     )
     plot_stacked_histograms(
         stacked_hists=[bkg_hist[::hist.rebin(30)] for bkg_hist in bkg_hists],
         process_labels=process_labels,
-        signal_hists=[hist_signal[::hist.rebin(30)] * 10],
+        signal_hists=[hist_signal[::hist.rebin(30)] * 100],
         signal_labels=signal_labels,
         output_filename=fixed_plot_filename.replace(".pdf", "_log.pdf"),
-        axis_labels=("Toy NN output", "Toy events"),
+        axis_labels=("Toy discriminant", "Events"),
         normalize=False,
         log=True
     )
@@ -165,7 +210,7 @@ def main():
         plot_stacked_histograms(
             stacked_hists=bkg_hists_rb,
             process_labels=process_labels,
-            signal_hists=[hist_signal_rb * 10],
+            signal_hists=[hist_signal_rb * 100],
             signal_labels=signal_labels,
             output_filename=fixed_plot_filename,
             axis_labels=("Toy NN output", "Toy events"),
@@ -175,7 +220,7 @@ def main():
         plot_stacked_histograms(
             stacked_hists=bkg_hists_rb,
             process_labels=process_labels,
-            signal_hists=[hist_signal_rb * 10],
+            signal_hists=[hist_signal_rb * 100],
             signal_labels=signal_labels,
             output_filename=fixed_plot_filename.replace(".pdf", "_log.pdf"),
             axis_labels=("Toy NN output", "Toy events"),
@@ -186,43 +231,47 @@ def main():
 
     for nbins in gato_binning_options:
 
+        # --- 3) your training step stays pure tf.function ---
+        @tf.function
+        def train_step(model, tensor_data, optimizer, lam=0.0):
+            with tf.GradientTape() as tape:
+                loss, B = model.call(tensor_data)
+                penalty = low_bkg_penalty(B, threshold=10, steepness=10)
+                total_loss = loss + lam * penalty
+            grads = tape.gradient(total_loss, model.trainable_variables)
+            optimizer.apply_gradients(zip(grads, model.trainable_variables))
+            return total_loss, loss, penalty
+
         # --- Optimization: create a model instance with n_cats = nbins ---
-        opt_model = one_dimensional_binning_optimiser(n_cats=nbins, steepness=500.0, )
-        lam = 0.1
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.03, beta_1=0.7 if lam!=0 else 0.9)
+        model = one_dimensional_binning_optimiser(n_cats=nbins, steepness=500.0, )
+        lam = 0.
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.01, beta_1=0.7 if lam!=0 else 0.9)
 
         loss_history = []
         regularisation_history = []
         boundary_history = []
         epochs = 250
 
+        tensor_data = df_dict_to_tensors(data)
+
         for epoch in range(epochs):
-            with tf.GradientTape() as tape:
-                loss, B = opt_model.call(data)
-                regularisation = low_bkg_penalty(B, threshold=10, steepness=10)
 
-                total_loss = loss
-                if lam != 0:
-                    total_loss += lam*regularisation
-
-            # Compute gradients and update
-            grads = tape.gradient(total_loss, opt_model.trainable_variables)
-            optimizer.apply_gradients(zip(grads, opt_model.trainable_variables))
+            total_loss, loss, penalty = train_step(model, tensor_data, optimizer, lam=lam)
 
             # Save the history
             loss_history.append(loss.numpy())
-            regularisation_history.append(regularisation.numpy())
+            regularisation_history.append(penalty.numpy())
             # Save the current boundaries in [0,1]
-            boundaries_ = calculate_boundaries(opt_model.raw_boundaries_list[0])
+            boundaries_ = calculate_boundaries(model.raw_boundaries_list[0])
             boundary_history.append(boundaries_)
 
             if epoch % 5 == 0 or epoch == epochs - 1:
                 print(f"[n_bins={nbins}] Epoch {epoch}: total_loss = {total_loss.numpy():.3f}, base_loss={loss.numpy():.3f}")
-                print("Effective boundaries:", opt_model.get_effective_boundaries())
+                print("Effective boundaries:", model.get_effective_boundaries())
 
 
         # Now, rebuild optimized histograms using effective boundaries.
-        eff_boundaries = opt_model.get_effective_boundaries()["NN_output"]
+        eff_boundaries = model.get_effective_boundaries()["NN_output"]
         print(f"Optimized boundaries for {nbins} bins: {eff_boundaries}")
 
         opt_bin_edges = np.concatenate(([low], np.array(eff_boundaries), [high]))
