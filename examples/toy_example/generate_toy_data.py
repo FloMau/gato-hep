@@ -25,24 +25,25 @@ def generate_toy_data_gauss(
 
     # 1) define means & covariances
     means = {
-        "signal": np.array([ 2.5,  0.0,  0.0]),
-        "bkg1":   np.array([ 0.5,  1.,  0.0]),
-        "bkg2":   np.array([ 0.25,  -0.25,  1.0]),
-        "bkg3":   np.array([ 0.75,  0.25,  -0.25]),
+        "signal": np.array([ 0.5,  0.5,  1.0]),
+        "bkg1":   np.array([ -0.5,  1.,  -1]),
+        "bkg2":   np.array([ 0.25,  -0.25,  3.0]),
+        "bkg3":   np.array([ 0.75,  0.25,  -0.5]),
     }
+
     covs = {
-        "signal": np.array([[1.0, 0.3, 0.3],
-                            [0.3, 1.0, 0.3],
-                            [0.3, 0.3, 1.0]]),
-        "bkg1":   np.array([[1.0, 0.2, 0.0],
-                            [0.2, 1.0, 0.2],
-                            [0.0, 0.2, 1.0]]),
-        "bkg2":   np.array([[1.0, 0.1, 0.3],
-                            [0.1, 1.0, 0.1],
-                            [0.3, 0.1, 1.0]]),
-        "bkg3":   np.array([[1.0, 0.2, 0.4],
-                            [0.2, 1.0, 0.2],
-                            [0.4, 0.2, 1.0]]),
+        "signal": np.array([[1, 0.2, 0.1],
+                            [0.2, 1, 0.2],
+                            [0.1, 0.2, 1]]),
+        "bkg1":   np.array([[0.5, 0.2, 0.0],
+                            [0.2, 0.5, 0.2],
+                            [0.0, 0.2, 0.5]]),
+        "bkg2":   np.array([[0.5, 0.1, 0.3],
+                            [0.1, 0.5, 0.1],
+                            [0.3, 0.1, 0.5]]),
+        "bkg3":   np.array([[0.5, 0.2, 0.4],
+                            [0.2, 0.5, 0.2],
+                            [0.4, 0.2, 0.5]]),
     }
 
     # 2) how many to draw and what weights
@@ -69,6 +70,9 @@ def generate_toy_data_gauss(
     # 4) build scipy MVN pdfs
     pdfs = {proc: multivariate_normal(means[proc], covs[proc])
             for proc in means}
+    
+    # total cross section of background
+    total_bkg_xs = sum(xs[p] for p in pdfs if p != "signal")
 
     # 5) compute optimal discriminant for each proc’s points:
     dfs = {}
@@ -77,10 +81,14 @@ def generate_toy_data_gauss(
         w = info["w"]
         p_sig = pdfs["signal"].pdf(X)
         # sum of background pdfs at X
-        p_bkg = sum(pdfs[p].pdf(X) for p in pdfs if p != "signal")
+        p_bkg = sum((xs[p] / total_bkg_xs) * pdfs[p].pdf(X) for p in pdfs if p != "signal")
+
+        # noise 
+        p_sig *= np.abs((1 + np.random.normal(scale=0.2, size=p_sig.shape)))
+        p_bkg *= np.abs((1 + np.random.normal(scale=0.2, size=p_bkg.shape)))
         # likelihood‐ratio and map to [0,1] via sigmoid‐like:
         lr = p_sig / (p_bkg + 1e-12)
-        lr *= np.abs((1 + np.random.normal(scale=0.2)))
+
         disc = lr / (1.0 + lr)
         # disc = 2 * tf.nn.sigmoid(lr) - 1
         dfs[proc] = pd.DataFrame({
