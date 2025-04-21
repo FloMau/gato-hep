@@ -20,7 +20,7 @@ from diffcat_optimizer.differentiable_categories import asymptotic_significance,
 # ------------------------------------------------------------------------------
 # 5D Toy Data Generator
 # ------------------------------------------------------------------------------
-def generate_toy_data_multiclass_5D(n_signal1=1000, n_signal2=1000,
+def _generate_toy_data_multiclass_5D(n_signal1=1000, n_signal2=1000,
                                     n_bkg1=1000, n_bkg2=1000, n_bkg3=1000,
                                     # Means chosen such that after softmax, 
                                     # signal1 is biased to component 0, signal2 to component 1,
@@ -77,6 +77,221 @@ def generate_toy_data_multiclass_5D(n_signal1=1000, n_signal2=1000,
         "bkg3": df_bkg3
     }
     return data
+
+
+import numpy as np
+import pandas as pd
+from scipy.stats import multivariate_normal
+
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from scipy.stats import multivariate_normal
+
+def generate_toy_data_multiclass_5D(
+    n_signal1=100000, n_signal2=100000,
+    n_bkg1=500000,    n_bkg2=250000,    n_bkg3=50000,
+    # these now only go into the event weight, not the classifier priors:
+    xs_signal1=0.5, xs_signal2=0.1,
+    xs_bkg1=100,    xs_bkg2=50,    xs_bkg3=10,
+    lumi=100.0, seed=None
+):
+    """
+    5D toy: 5 classes in 3D with moderate overlap and EQUAL classifier‐priors.
+    Returns DataFrames with columns “NN_output” (5‐vector) and “weight”.
+    """
+    if seed is not None:
+        np.random.seed(seed)
+
+    classes = ["signal1","signal2","bkg1","bkg2","bkg3"]
+
+    # 1) place means only ~0.8–1.0 σ apart
+    sep = 1
+    means = {
+        "signal1": np.array([ sep,   -sep,   0.0 ]),
+        "signal2": np.array([ -sep,  -sep,   0.0 ]),
+        "bkg1":    np.array([ 0.0,   -sep,   0.0]),
+        "bkg2":    np.array([ 0.5*sep,  -0.5*sep,   0.0 ]),
+        "bkg3":    np.array([ -0.8*sep,   -0.8*sep,   sep ]),
+    }
+
+    sigma = 0.7
+    cov = np.eye(3)*sigma**2 + 0.25*sigma*(np.ones((3,3))-np.eye(3))
+
+    # 3) sample raw 3D points
+    counts = dict(signal1=n_signal1, signal2=n_signal2,
+                  bkg1=n_bkg1, bkg2=n_bkg2, bkg3=n_bkg3)
+    raw = { cls: np.random.multivariate_normal(means[cls], cov, size=counts[cls])
+            for cls in classes }
+
+    # 4) build Gauss PDFs and compute _equal‐prior_ posteriors
+    rvs = { cls: multivariate_normal(mean=means[cls], cov=cov) for cls in classes }
+    prior_equal = np.ones(len(classes))  # IMPORTANT: equal priors for classification
+
+    dfs = {}
+    for cls in classes:
+        X = raw[cls]   # shape (N_cls,3)
+        like = np.stack([rvs[j].pdf(X) for j in classes], axis=1)  # (N_cls,5)
+        unnorm = like * prior_equal[None,:]
+        post = unnorm / np.sum(unnorm, axis=1, keepdims=True)
+
+        # now attach the _true_ physics weight:
+        weight = ({"signal1":xs_signal1, "signal2":xs_signal2,
+                   "bkg1":xs_bkg1, "bkg2":xs_bkg2, "bkg3":xs_bkg3}[cls] * lumi) \
+                 / counts[cls]
+
+        dfs[cls] = pd.DataFrame({
+            "NN_output": list(post),
+            "weight": weight
+        })
+
+    return dfs
+
+
+import numpy as np
+from scipy.stats import multivariate_normal
+import pandas as pd
+import tensorflow as tf
+
+def random_gaussian_clusters(
+    n_classes, dim, sigma=1.0, min_separation=1.5, seed=None
+):
+    """
+    Pick `n_classes` random centers in `dim`D so that each pair is at least
+    `min_separation * sigma` apart.  Returns (centers, cov), with cov = σ² I.
+    """
+    if seed is not None:
+        np.random.seed(seed)
+    centers = []
+    cov = np.eye(dim) * sigma**2
+    while len(centers) < n_classes:
+        cand = np.random.randn(dim)
+        if not centers or np.min(np.linalg.norm(np.stack(centers) - cand, axis=1)) >= min_separation * sigma:
+            centers.append(cand)
+    return np.stack(centers), cov
+
+def sample_gaussian(n, mean, cov, seed=None):
+    if seed is not None:
+        np.random.seed(seed)
+    return np.random.multivariate_normal(mean, cov, size=n)
+
+
+def generate_toy_data_multiclass_5D(
+    n_signal1=100000, n_signal2=100000,
+    n_bkg1=100000, n_bkg2=100000, n_bkg3=100000,
+    xs_signal1=0.5, xs_signal2=0.1,
+    xs_bkg1=100, xs_bkg2=50, xs_bkg3=10,
+    lumi=100, seed=None
+):
+    """
+    3D Gaussian toy: data live in 3D, but classifier learns a 5D multiclass
+    softmax posterior under the assumption that all 3 groups (signal1, signal2, total bkg)
+    have equal total weight in training, and background classes are internally
+    weighted according to their cross sections.
+    """
+    if seed is not None:
+        np.random.seed(seed)
+
+    classes = ["signal1", "signal2", "bkg1", "bkg2", "bkg3"]
+    counts = {
+        "signal1": n_signal1, "signal2": n_signal2,
+        "bkg1": n_bkg1, "bkg2": n_bkg2, "bkg3": n_bkg3
+    }
+    xs = {
+        "signal1": xs_signal1, "signal2": xs_signal2,
+        "bkg1": xs_bkg1, "bkg2": xs_bkg2, "bkg3": xs_bkg3
+    }
+
+    # 1) define fixed 3D means and covariances
+    means = {
+        "signal1": np.array([0.5, 0.5, 1.0]),
+        "signal2": np.array([-0.75, 0.75, 2.5]),
+        "bkg1": np.array([-0.5, 1.0, -1.5]),
+        "bkg2": np.array([0.25, -0.25, 3.0]),
+        "bkg3": np.array([0.75, 0.25, -0.5])
+    }
+
+    covs = {
+        "signal1": np.array([
+            [1.0, 0.2, 0.1],
+            [0.2, 1.0, 0.2],
+            [0.1, 0.2, 1.0]
+        ]),
+        "signal2": np.array([
+            [1.0, 0.1, 0.0],
+            [0.1, 1.0, 0.1],
+            [0.0, 0.1, 1.0]
+        ]),
+        "bkg1": np.array([
+            [1.0, 0.2, 0.0],
+            [0.2, 1.0, 0.2],
+            [0.0, 0.2, 1.0]
+        ]),
+        "bkg2": np.array([
+            [1.0, 0.1, 0.3],
+            [0.1, 1.0, 0.1],
+            [0.3, 0.1, 1.0]
+        ]),
+        "bkg3": np.array([
+            [1.0, 0.2, 0.4],
+            [0.2, 1.0, 0.2],
+            [0.4, 0.2, 1.0]
+        ])
+    }
+
+    # 2) sample raw 3D points for each class
+    raw = {
+        cls: sample_gaussian(counts[cls], means[cls], covs[cls], seed=seed)
+        for cls in classes
+    }
+
+    # noise to raw:
+    raw = {
+        cls: raw[cls] * np.random.normal(loc=1, scale=0.2, size=raw[cls].shape)
+        for cls in classes
+    }
+
+    # 3) build scipy RVs for each class
+    rvs = {
+        cls: multivariate_normal(mean=means[cls], cov=covs[cls])
+        for cls in classes
+    }
+
+    # 4) compute priors for equal-weight training setup
+    # Each group (signal1, signal2, bkg) gets equal total weight
+    # Background components are internally scaled according to xs
+    total_bkg_xs = xs_bkg1 + xs_bkg2 + xs_bkg3
+    background_fractions = {
+        "bkg1": xs_bkg1 / total_bkg_xs,
+        "bkg2": xs_bkg2 / total_bkg_xs,
+        "bkg3": xs_bkg3 / total_bkg_xs
+    }
+
+    training_priors = {
+        "signal1": 1/3,
+        "signal2": 1/3,
+        "bkg1": background_fractions["bkg1"] * (1/3),
+        "bkg2": background_fractions["bkg2"] * (1/3),
+        "bkg3": background_fractions["bkg3"] * (1/3)
+    }
+
+    # 5) compute softmax posterior
+    dfs = {}
+    for cls in classes:
+        X = raw[cls]
+        like = np.stack([rvs[c].pdf(X) for c in classes], axis=1)  # shape (N, 5)
+        prior_vec = np.array([training_priors[c] for c in classes])
+        unnorm = like * prior_vec[None, :]
+        unnorm *= np.abs((1 + np.random.normal(scale=0.2, size=unnorm.shape)))
+        post = unnorm / unnorm.sum(axis=1, keepdims=True)
+        weight = xs[cls] * lumi / counts[cls]
+        dfs[cls] = pd.DataFrame({
+            "NN_output": list(post),
+            "weight": weight
+        })
+
+    return dfs
+
 
 # ------------------------------------------------------------------------------
 # Helper: Create a fixed histogram from 1D data.
@@ -187,7 +402,7 @@ class DiffCatModelExample5D(DiffCatModelMultiDimensional):
 # ------------------------------------------------------------------------------
 def main():
    # Generate 5D toy data with two signals and three backgrounds.
-    data = generate_toy_data_multiclass_5D(
+    data = _generate_toy_data_multiclass_5D(
         n_signal1=100000,
         n_signal2=100000,
         n_bkg1=200000,
@@ -205,6 +420,8 @@ def main():
         cov=np.eye(5)*2 + 0.3*(np.ones((5,5))-np.eye(5)*2),
         seed=42
     )
+
+    data = generate_toy_data_multiclass_5D(seed=42)
 
     # For each event, compute the argmax over the full 5D NN output.
     baseline_assignments = {}
@@ -230,6 +447,7 @@ def main():
         bkg_hists_sig1 = []
         bkg_labels_sig1 = []
         for proc, df in data.items():
+            print(proc, np.stack(df["NN_output"].values)[:, 0])
             mask = baseline_assignments[proc] == 0
             if np.sum(mask) == 0:
                 continue
@@ -292,10 +510,11 @@ def main():
     # ----- Optimization: learn the Gaussian mixture clustering for 5D -----
     path_plots_opt = "examples/5D_2signals_softmax_example/Plots/gato/"
     os.makedirs(path_plots_opt, exist_ok=True)
+
     # Use the full 5D output.
     Z1_gato = {}
     Z2_gato = {}
-    gato_binning_options = [3, 25]
+    gato_binning_options = [3, 10]
     tensor_data = convert_data_to_tensors(data)
     for n_cats in gato_binning_options:
 
@@ -322,7 +541,7 @@ def main():
         loss_history = []
         reg_history = []
         param_history = []
-        epochs = 250
+        epochs = 150
 
         for epoch in range(epochs):
             total_loss, loss, reg = train_step(model, tensor_data, optimizer, lam=lam)
