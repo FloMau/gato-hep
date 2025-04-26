@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import Ellipse
+from matplotlib.patches import Ellipse, Patch
 import mplhep as hep  # assuming you use mplhep for histplot
 import hist
 plt.style.use(hep.style.ROOT)
@@ -390,3 +390,42 @@ def plot_learned_gaussians(data, model, dim_x, dim_y, output_filename, conf_leve
     plt.tight_layout()
     plt.savefig(output_filename)
     plt.close(fig)
+
+def visualize_bins_2d(data_dict, var_label, n_bins, path_plot):
+    """
+    2D scatter of all points colored by their assigned 'bin_index'.
+    Uses the 'bin_index' column and fixed colormap.
+    """
+    dims_list = [(0,1), (0,2), (1,2)]
+    for dims in dims_list:
+        # gather all scores and bin indices
+        all_scores = []
+        all_bins = []
+        for df in data_dict.values():
+            arr = np.vstack(df[var_label].to_numpy())[:1000]
+            bins = df['bin_index'].to_numpy()[:1000]
+            all_scores.append(arr)
+            all_bins.append(bins)
+        scores = np.vstack(all_scores)
+        bins   = np.concatenate(all_bins)
+
+        cmap = plt.cm.get_cmap('tab20', n_bins)
+        fig, ax = plt.subplots(figsize=(8,6))
+        sc = ax.scatter(
+            scores[:, dims[0]], scores[:, dims[1]],
+            c=bins, cmap=cmap, vmin=0, vmax=n_bins-1,
+            s=10, alpha=0.2
+        )
+
+        # legend proxies
+        proxies = [Patch(color=cmap(k), label=f'Bin {k}') for k in range(n_bins)]
+        ax.legend(fontsize=14, handles=proxies, ncol=2, labelspacing=0.2, columnspacing=0.5)
+
+        ax.set_xlabel(f"Discriminant node {dims[0]}")
+        ax.set_ylabel(f"Discriminant node {dims[1]}")
+        #ax.set_title(f"Bins by assigned index (dims={dims})")
+
+        fig.tight_layout()
+        fig.savefig(path_plot.replace(".pdf", f"_{dims[0]}_{dims[1]}.pdf"))
+        fig.clf()
+

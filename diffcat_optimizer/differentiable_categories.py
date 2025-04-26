@@ -1,8 +1,9 @@
 import tensorflow as tf
-import tensorflow_probability as tfp
 import numpy as np
-
+from scipy.stats import norm
+import tensorflow_probability as tfp
 tfd = tfp.distributions
+
 
 def asymptotic_significance(S, B, eps=1e-9):
     """
@@ -14,8 +15,18 @@ def asymptotic_significance(S, B, eps=1e-9):
     Z_asimov = tf.sqrt(2.0 * ((S + safe_B)*tf.math.log(1.0 + ratio) - S))
     # S/sqrt(B) approximation for small S/B:
     Z_approx = S / tf.sqrt(safe_B)
-    # Switch where ratio < 0.001
+    # Switch where ratio < 0.1
     return tf.where(ratio < 0.1, Z_approx, Z_asimov)
+
+def compute_significance_from_hists(h_signal, h_bkg_list):
+    # Sum background counts bin-by-bin.
+    B_vals = sum([h_bkg.values() for h_bkg in h_bkg_list])
+    S_vals = h_signal.values()
+    S_tensor = tf.constant(S_vals, dtype=tf.float32)
+    B_tensor = tf.constant(B_vals, dtype=tf.float32)
+    Z_bins = asymptotic_significance(S_tensor, B_tensor)
+    Z_overall = np.sqrt(np.sum(Z_bins.numpy()**2))
+    return Z_overall
 
 def safe_sigmoid(z, steepness):
     z_clipped = tf.clip_by_value(-steepness * z, -75.0, 75.0)
@@ -183,8 +194,6 @@ class DiffCatModelMultiDimensional(DifferentiableCutModel):
         self.mixture_logits = tf.Variable(tf.random.normal([n_cats], stddev=0.1), trainable=True, name="mixture_logits")
 
         # Means (shape: [n_cats, dim])
-        # self.raw_means = tf.Variable(tf.random.normal([n_cats, dim], stddev=0.3), trainable=True, name="raw_means")
-        # self.means = tf.Variable(tf.nn.sigmoid(self.raw_means), trainable=True)
         self.means = tf.Variable(tf.random.normal([n_cats, dim], mean=0., stddev=2), trainable=True, name="means")
 
         # Unconstrained lower triangular matrices (shape: [n_cats, dim, dim])
@@ -229,3 +238,43 @@ class DiffCatModelMultiDimensional(DifferentiableCutModel):
             "means": self.means.numpy().tolist(),
             "scale_tril": self.get_scale_tril().numpy().tolist()
         }
+
+    def get_effective_boundaries_1d(self, n_steps=100000):
+        """
+        Numerically find the n_cats-1 crossing points in [0,1] where
+        the highest-scoring Gaussian component (w_i * Normal(x|mu_i,sigma_i))
+        switches from one one bin to the next.
+        """
+        # 1) grab learned params
+        params      = self.get_effective_parameters()
+        weights      = np.array(params["mixture_weights"])              # (n_cats,)
+        mu_raw = np.array(params["means"])[:,0]                   # raw means (un-sigmoided)
+        sigma  = np.array(params["scale_tril"])[:,0,0]            # diag of scale_tril
+
+        # 2) constrain to [0,1] via sigmoid
+        mu = tf.math.sigmoid(mu_raw).numpy()
+
+        # 3) sort everything by ascending mu
+        order = np.argsort(mu)
+        weights, mu, sigma = weights[order], mu[order], sigma[order]
+
+        # 4) grid and pdf evaluation
+        xgrid = np.linspace(0,1,n_steps)
+        # shape (n_cats, n_steps) → transpose to (n_steps,n_cats)
+        pdf_grid = np.vstack([
+            w_i * norm.pdf(xgrid, loc=m_i, scale=s_i)
+            for w_i,m_i,s_i in zip(weights, mu, sigma)
+        ]).T
+
+        # 5) find argmax changes
+        idx = np.argmax(pdf_grid, axis=1)       # for each x, which component wins
+        steps = np.where(idx[:-1] != idx[1:])[0]
+
+        # 6) record midpoints of those jumps
+        cuts = []
+        for s in steps:
+            cuts.append(0.5*(xgrid[s]+xgrid[s+1]))
+            if len(cuts) >= self.n_cats-1:
+                break
+
+        return sorted(cuts)

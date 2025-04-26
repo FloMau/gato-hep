@@ -7,12 +7,13 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 tfd = tfp.distributions
 import hist
+from scipy.stats import multivariate_normal
 # Append the repo root to sys.path so that we can import our core modules.
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 from diffcat_optimizer.differentiable_categories import asymptotic_significance, DiffCatModelMultiDimensional, low_bkg_penalty
-from diffcat_optimizer.plotting_utils import plot_stacked_histograms, plot_history, plot_learned_gaussians, assign_bins_and_order, fill_histogram_from_assignments
+from diffcat_optimizer.plotting_utils import plot_stacked_histograms, plot_history, plot_learned_gaussians, assign_bins_and_order, fill_histogram_from_assignments, visualize_bins_2d
 
 # ----------------------------------------------------------------------------
 # 3D Toy Data Generator for 3-class classifier
@@ -62,6 +63,102 @@ def generate_toy_data_3class_3D(
     for p in processes:
         weight = xs[p] * lumi / counts[p]
         data[p] = pd.DataFrame({"NN_output": list(nn_out[p]), "weight": weight})
+    return data
+
+def generate_toy_data_3class_3D_Nitish(
+    n_signal1=100000, n_signal2=100000,
+    n_bkg1=100000, n_bkg2=80000, n_bkg3=50000, n_bkg4=20000, n_bkg5=10000,
+    xs_signal1=0.5, xs_signal2=0.1,
+    xs_bkg1=100, xs_bkg2=80, xs_bkg3=50, xs_bkg4=20, xs_bkg5=10,
+    lumi=100.0, noise_scale=0.2, seed=None
+):
+    """
+    Generate 3D Gaussian data for 2 signal and 5 background classes.
+    For each point, compute likelihood-ratio-based 3-class scores:
+        [score_signal1, score_signal2, score_background]
+    Returns dict of DataFrames with columns: 'NN_output' (3-vector) and 'weight'.
+    """
+    if seed is not None:
+        np.random.seed(seed)
+
+    processes = ["signal1", "signal2", "bkg1", "bkg2", "bkg3", "bkg4", "bkg5"]
+
+    means = {
+        "signal1": np.array([1.5, -1.0, -1.0]),
+        "signal2": np.array([-1.0, 1.5, -1.0]),
+        "bkg1":    np.array([-0.5, -0.5, 1.0]),
+        "bkg2":    np.array([0.5, -0.5, 0.8]),
+        "bkg3":    np.array([0.5, 0.5, -0.6]),
+        "bkg4":    np.array([-0.5, 1.0, -0.4]),
+        "bkg5":    np.array([-0.5, 0.5, -0.2])
+    }
+
+    # Slightly correlated 3D Gaussian
+    cov = np.eye(3)*1.0 + 0.2*(np.ones((3,3)) - np.eye(3))
+
+    counts = {
+        "signal1": n_signal1, "signal2": n_signal2,
+        "bkg1": n_bkg1, "bkg2": n_bkg2, "bkg3": n_bkg3,
+        "bkg4": n_bkg4, "bkg5": n_bkg5
+    }
+
+    xs = {
+        "signal1": xs_signal1, "signal2": xs_signal2,
+        "bkg1": xs_bkg1, "bkg2": xs_bkg2, "bkg3": xs_bkg3,
+        "bkg4": xs_bkg4, "bkg5": xs_bkg5
+    }
+
+    # 1. Sample raw 3D data
+    raw = {
+        p: np.random.multivariate_normal(mean=means[p], cov=cov, size=counts[p])
+        for p in processes
+    }
+
+    # 2. Add multiplicative noise
+    for p in processes:
+        noise = np.random.normal(loc=1.0, scale=noise_scale, size=raw[p].shape)
+        raw[p] *= noise
+
+    # 3. Build PDFs
+    pdfs = {
+        p: multivariate_normal(mean=means[p], cov=cov)
+        for p in processes
+    }
+
+    # 4. Combined background PDF with proper cross-section weighting
+    bkg_processes = [p for p in processes if p.startswith("bkg")]
+    total_bkg_xs = sum(xs[p] for p in bkg_processes)
+
+    def combined_bkg_pdf(X):
+        return sum(
+            (xs[p] / total_bkg_xs) * pdfs[p].pdf(X)
+            for p in bkg_processes
+        )
+
+    # 5. Compute likelihood-ratio-based scores
+    data = {}
+    for proc in processes:
+        X = raw[proc]
+        weight = xs[proc] * lumi / counts[proc]
+
+        p1 = pdfs["signal1"].pdf(X)
+        p2 = pdfs["signal2"].pdf(X)
+        pb = combined_bkg_pdf(X)
+
+        total = p1 + p2 + pb + 1e-12  # avoid divide-by-zero
+
+        score1 = p1 / total
+        score2 = p2 / total
+        score_bkg = pb / total
+
+        nn_output = np.stack([score1, score2, score_bkg], axis=1)
+        nn_output = [row for row in nn_output]
+
+        data[proc] = pd.DataFrame({
+            "NN_output": nn_output,
+            "weight": weight
+        })
+
     return data
 
 # Helpers
@@ -131,13 +228,33 @@ if __name__ == '__main__':
     path_plots = './examples/3D_2signals_softmax_example/Plots/'
     os.makedirs(path_plots, exist_ok=True)
     # Generate data & convert
-    data = generate_toy_data_3class_3D(seed=42)
+    # data = generate_toy_data_3class_3D(seed=42)
+    data = generate_toy_data_3class_3D_Nitish(seed=42)
     tensor_data = convert_data_to_tensors(data)
 
     # Baseline significance with simple binning
     baseline_results = {'signal1':{}, 'signal2':{}}
-    path_baseline = 'Plots/Baseline'
-    os.makedirs(path_baseline, exist_ok=True)
+
+    # first: plot without argmax reqiurement and many bins:
+    for dim in range(3):
+        _hists = {}
+        for proc, df in data.items():
+            print(proc)
+            vals = np.stack(df['NN_output'].values)[:,dim]
+            _hists[proc] = create_hist(vals, df['weight'].values, bins=50, low=0.0, high=1.0)
+            print(_hists[proc])
+        for use_log in [True, False]:
+            log_suffix = "_log" if use_log else ""
+            plot_stacked_histograms(
+                stacked_hists=[_hists[p] for p in data.keys() if not p.startswith("signal")],
+                process_labels=[p for p in data.keys() if not p.startswith("signal")],
+                signal_hists=[100*_hists["signal1"], 500*_hists["signal2"]],
+                signal_labels=['Signal1 x100', 'Signal2 x500'],
+                log=use_log,
+                output_filename=os.path.join(path_plots, f"data_dim_{dim}{log_suffix}.pdf"),
+                axis_labels=("NN discriminant node {dim}", "Events"),
+            )
+
     for nbins in [2, 5, 10, 20]:
         baseline_configs = []
         # Signal1 channel
@@ -186,8 +303,12 @@ if __name__ == '__main__':
                 )
 
     # Optimization via DiffCatModelExample3D
-    path_opt = path_plots + "gato/"
-    os.makedirs(path_opt, exist_ok=True)
+    path_gato_plots = path_plots + "gato/"
+    os.makedirs(path_gato_plots, exist_ok=True)
+
+    path_gato_plots_bins_2d = path_gato_plots + "2D_bin_visualizations/"
+    os.makedirs(path_gato_plots_bins_2d, exist_ok=True)
+
     optimized_results = {'signal1':{}, 'signal2':{}}
     for n_cats in [3, 10, 20]:
         @tf.function
@@ -206,11 +327,13 @@ if __name__ == '__main__':
         for epoch in range(epochs):
             total_loss, base_loss = train_step(model, tensor_data, optimizer)
             loss_history.append(base_loss.numpy())
-            if epoch % 20 == 0:
+            if epoch % 10 == 0:
                 print(f'[Epoch {epoch}] base_loss={base_loss.numpy():.3f}')
 
         # Assign bins and fill histograms
         assignments, order, _, inv_map = assign_bins_and_order(model, data)
+        for proc in data.keys():
+            data[proc]["bin_index"] = assignments[proc]
         filled = {}
         for proc in data.keys():
             filled[proc] = fill_histogram_from_assignments(
@@ -236,7 +359,7 @@ if __name__ == '__main__':
 
 
         # --------- plot optimized histograms ----------
-        opt_plot_filename = os.path.join(path_opt, f"NN_output_distribution_optimized_{n_cats}bins.pdf")
+        opt_plot_filename = os.path.join(path_gato_plots, f"NN_output_distribution_optimized_{n_cats}bins.pdf")
 
         # linear plot
         plot_stacked_histograms(
@@ -267,7 +390,7 @@ if __name__ == '__main__':
         # 1) Plot loss history
         plot_history(
             loss_history,
-            os.path.join(path_opt, f"history_loss_{n_cats}bins.pdf"),
+            os.path.join(path_gato_plots, f"history_loss_{n_cats}bins.pdf"),
             y_label="Negative geometric mean significance",
             x_label="Epoch",
             boundaries=False,
@@ -282,11 +405,18 @@ if __name__ == '__main__':
                 dim_x=dx,
                 dim_y=dy,
                 output_filename=os.path.join(
-                    path_opt, f"GaussianBlobs_{n_cats}Bins_dims{dx}{dy}.pdf"
+                    path_gato_plots, f"GaussianBlobs_{n_cats}Bins_dims{dx}{dy}.pdf"
                 ),
                 inv_mapping=inv_map
             )
 
+        path_plots_bins_2d = os.path.join(path_plots, )
+        visualize_bins_2d(
+            data_dict=data,
+            var_label="NN_output",
+            n_bins=n_cats,
+            path_plot=os.path.join(path_gato_plots_bins_2d, f"{n_cats}_bins.pdf")
+        )
 
     # Comparison plot
     fig, ax = plt.subplots()
@@ -298,6 +428,6 @@ if __name__ == '__main__':
     ax.set_xlabel('Number of bins')
     ax.set_ylabel('Significance')
     ax.legend()
-    comp_file = os.path.join(path_opt, 'significance_comparison.pdf')
+    comp_file = os.path.join(path_gato_plots, 'significance_comparison.pdf')
     plt.savefig(comp_file)
     print(f'Saved comparison plot to {comp_file}')

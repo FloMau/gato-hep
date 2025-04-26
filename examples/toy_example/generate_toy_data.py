@@ -12,7 +12,7 @@ def sample_gaussian(n_events, mean, cov, seed=None):
 
 def generate_toy_data_gauss(
     n_signal=100000, n_bkg1=200000, n_bkg2=100000, n_bkg3=100000,
-    xs_signal=0.5, xs_bkg1=50, xs_bkg2=15, xs_bkg3=1,
+    xs_signal=0.5, xs_bkg1=50, xs_bkg2=15, xs_bkg3=10,
     lumi=100, seed=None
 ):
     """

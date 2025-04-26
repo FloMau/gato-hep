@@ -12,7 +12,7 @@ repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 
-from diffcat_optimizer.plotting_utils import plot_stacked_histograms, plot_history, plot_learned_gaussians
+from diffcat_optimizer.plotting_utils import plot_stacked_histograms, plot_history, plot_learned_gaussians, visualize_bins_2d
 from diffcat_optimizer.differentiable_categories import asymptotic_significance, DiffCatModelMultiDimensional, low_bkg_penalty
 from generate_toy_data import generate_toy_data_multiclass
 
@@ -329,6 +329,9 @@ def main():
         h_bkg1_opt = fill_histogram_from_assignments(bin_assignments["bkg1"],data["bkg1"]["weight"], nbins)
         h_bkg2_opt = fill_histogram_from_assignments(bin_assignments["bkg2"],data["bkg2"]["weight"], nbins)
 
+        # visualize_bins_2d(
+        #     data_dict=
+        # )
         print("Signal hist:", h_signal_opt)
         print("background hist 1", h_bkg1_opt)
 
