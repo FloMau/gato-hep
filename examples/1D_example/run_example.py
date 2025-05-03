@@ -13,12 +13,12 @@ if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 
 from diffcat_optimizer.plotting_utils import plot_stacked_histograms, plot_history, plot_yield_vs_uncertainty, plot_significance_comparison
-from diffcat_optimizer.differentiable_categories import asymptotic_significance, DiffCatModelMultiDimensional, low_bkg_penalty, compute_significance_from_hists, high_bkg_uncertainty_penalty
+from diffcat_optimizer.differentiable_categories import asymptotic_significance, gato_gmm_model, low_bkg_penalty, compute_significance_from_hists, high_bkg_uncertainty_penalty
 from diffcat_optimizer.utils import df_dict_to_tensors, create_hist
-from generate_toy_data import generate_toy_data_gauss
+from diffcat_optimizer.data_generation import generate_toy_data_1D
 
 
-class one_dimensional_binning_optimiser(DiffCatModelMultiDimensional):
+class gato_1D(gato_gmm_model):
     def __init__(self, n_cats, temperature=1.0, name="el_gato"):
         super().__init__(
             # variables_config=[{"name":"NN_output", "n_cats":n_cats}],
@@ -79,7 +79,7 @@ class one_dimensional_binning_optimiser(DiffCatModelMultiDimensional):
 # ------------------------------------------------------------------------------
 def main():
     # 1. Generate toy data
-    data = generate_toy_data_gauss(
+    data = generate_toy_data_1D(
         # n_signal=100000,
         # n_bkg1=200000, n_bkg2=100000, n_bkg3=100000,
         n_signal=int(100000 / 50),
@@ -188,7 +188,7 @@ def main():
             return total_loss, loss, penalty_yield, penalty_unc
 
         # --- Optimization: create a model instance with n_cats = nbins ---
-        model = one_dimensional_binning_optimiser(n_cats=nbins, temperature=0.1)
+        model = gato_1D(n_cats=nbins, temperature=0.1)
         optimizer = tf.keras.optimizers.Adam(learning_rate=0.01, beta_1=0.9) # if lam_yield==0 else 0.5)
 
         loss_history = []
@@ -196,7 +196,7 @@ def main():
         penalty_unc_history = []
         boundary_history = []
 
-        epochs = 30
+        epochs = 10
         lam_yield = 0.0
         lam_unc = 10000
 

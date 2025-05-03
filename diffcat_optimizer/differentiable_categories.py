@@ -184,7 +184,7 @@ class DifferentiableCutModel(tf.Module):
         return out
 
 
-class DiffCatModelMultiDimensional(DifferentiableCutModel):
+class gato_gmm_model(DifferentiableCutModel):
     """
     A differentiable category model based on a Gaussian mixture.
 
@@ -203,7 +203,7 @@ class DiffCatModelMultiDimensional(DifferentiableCutModel):
     soft memberships, accumulates yields, and returns the negative overall significance
     as loss (plus background yields).
     """
-    def __init__(self, n_cats, dim, temperature=1.0, name="DiffCatModelMultiDimensional"):
+    def __init__(self, n_cats, dim, temperature=1.0, name="gato_gmm_model"):
         # Here, we don't use the 1D boundaries. We use our own parameters.
         super().__init__(variables_config=[{"name": "NN_output", "n_cats": n_cats}], name=name)
         self.n_cats = n_cats
@@ -302,7 +302,7 @@ class DiffCatModelMultiDimensional(DifferentiableCutModel):
 
     def get_effective_boundaries_1d(self, n_steps: int = 100_000, return_mapping: bool = False):
         """
-        Find the (n_cats‑1) crossing points and, if requested, return an
+        Find the (n_cats-1) crossing points and, if requested, return an
         `order` array: `order[j]` = component index that defines bin *j*.
         """
         import numpy as np
@@ -329,15 +329,15 @@ class DiffCatModelMultiDimensional(DifferentiableCutModel):
         cuts.sort()
 
         if return_mapping:
-            return cuts, order           # `order[j]` is original component id
+            return cuts, order
         return cuts
 
 
     def compute_hard_bkg_stats(self, data_dict, low=0.0, high=1.0, eps=1e-8):
         """
         Hard-assign each background event to its most-likely Gaussian component,
-        then compute per-bin background yield B_j and relative uncertainty σ_j/B_j,
-        and return them sorted by bin position in 1D or significance in multi-D.
+        then compute per-bin background yield B_j and relative uncertainty sigma_j/B_j,
+        and return them sorted by bin position in 1D or signif  icance in multi-D.
 
         Returns:
           B_sorted       np.array (n_cats,)
@@ -345,14 +345,11 @@ class DiffCatModelMultiDimensional(DifferentiableCutModel):
           order          np.array mapping original→sorted component indices
         """
 
-        # 1) pull out the exact same params you used in training
-        # mixture logits → log_mix
-        raw_logits = self.mixture_logits.numpy()                      # (n_cats,)
+        raw_logits = self.mixture_logits.numpy()                     # (n_cats,)
         log_mix    = tf.nn.log_softmax(raw_logits).numpy()           # (n_cats,)
-        # means → sigmoid(raw_means)
-        raw_means  = self.means.numpy().flatten()                    # (n_cats,)
+        raw_means  = self.means.numpy()                              # (n_cats,)
         if self.dim == 1:
-            # map raw means into [0,1]
+            # map raw means into [0,1] with sigmoid
             mu_act = expit(raw_means.flatten())
         else:
             # map raw means into valid vectors via softmax across dims for each component
@@ -362,26 +359,27 @@ class DiffCatModelMultiDimensional(DifferentiableCutModel):
 
         n_cats = self.n_cats
 
-        # 2) collect all background events
+        # collect all background events
         X_parts, W_parts = [], []
         for proc,t in data_dict.items():
-            if proc == "signal": continue
-            arr = np.asarray(t["NN_output"]).reshape(-1,1)
+            if proc.startswith("signal"):
+                continue
+            arr = np.asarray(t["NN_output"]).reshape(-1, self.dim)
             X_parts.append(arr)
             W_parts.append(np.asarray(t["weight"]))
         X = np.concatenate(X_parts, axis=0)   # (N,1)
         W = np.concatenate(W_parts)          # (N,)
 
-        # 3) compute the exact same log-joint as in training
+        # compute the exact same log-joint as in training
         logj = np.zeros((len(W), n_cats))
         for i in range(n_cats):
             dist = tfd.MultivariateNormalTriL(loc=mu_act[i], scale_tril=scales[i])
             logj[:,i] = dist.log_prob(X).numpy() + log_mix[i]
 
-        # 4) hard-assign to the winning component
+        # hard-assign to the winning component
         comp = np.argmax(logj, axis=1)
 
-        # 5) accumulate B and B2
+        # accumulate B and B2
         B = np.zeros(n_cats)
         B2= np.zeros(n_cats)
         for i in range(n_cats):
@@ -391,16 +389,15 @@ class DiffCatModelMultiDimensional(DifferentiableCutModel):
             B[i]  = w_i.sum()
             B2[i] = (w_i**2).sum()
 
-        # 6) compute rel-uncertainty
+        # compute rel-uncertainty
         sigma  = np.sqrt(np.maximum(B2,0.0))
         rel_unc= sigma/np.maximum(B,eps)
 
-        # 8) determine sort order
+        # determine order
         if self.dim == 1:
             _, order = self.get_effective_boundaries_1d(return_mapping=True)
         else:
             # multi-D: sort by per-bin Z
-            from diffcat_optimizer.differentiable_categories import asymptotic_significance
             S_dummy = tf.zeros_like(tf.constant(B, dtype=tf.float32))
             Zbins = asymptotic_significance(S_dummy, tf.constant(B, dtype=tf.float32)).numpy()
             order = np.argsort(-Zbins)

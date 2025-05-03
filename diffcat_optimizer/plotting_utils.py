@@ -5,6 +5,7 @@ from matplotlib.patches import Ellipse, Patch
 import mplhep as hep  # assuming you use mplhep for histplot
 import hist
 plt.style.use(hep.style.ROOT)
+from scipy.special import expit
 import tensorflow as tf
 import tensorflow_probability as tfp
 tfd = tfp.distributions
@@ -203,13 +204,13 @@ def plot_history(
                     boundary_vals.append(np.nan)
             ax.plot(epochs, boundary_vals, marker='o', label=f"Boundary {boundary_idx+1}", markersize=2 if max_nb>10 else 4)
 
-    ax.set_xlabel(x_label, fontsize=16)
-    ax.set_ylabel(y_label, fontsize=16)
+    ax.set_xlabel(x_label, fontsize=22)
+    ax.set_ylabel(y_label, fontsize=22)
     if title:
-        ax.set_title(title, fontsize=16)
+        ax.set_title(title, fontsize=22)
     ax.legend(
         ncol=2,
-        fontsize=8,           # reduce the text size
+        fontsize=18,           # reduce the text size
         markerscale=0.5,      # make the legend markers smaller
         labelspacing=0.2,     # reduce vertical space between labels
         handlelength=1,       # shorten the line length for legend markers
@@ -429,6 +430,100 @@ def visualize_bins_2d(data_dict, var_label, n_bins, path_plot):
         fig.savefig(path_plot.replace(".pdf", f"_{dims[0]}_{dims[1]}.pdf"))
         fig.clf()
 
+# in diffcat_optimizer/plotting_utils.py
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap, BoundaryNorm
+from scipy.stats import multivariate_normal
+from pathlib import Path
+
+def plot_bin_boundaries_simplex(model, path_plot, resolution=1000):
+    """
+    For each pair of score dims (i,j), slice the 3-simplex,
+    assign each point to the highest-density GMM component, and
+    draw filled regions + boundaries + bin labels.
+
+    Colors are taken from the current MPL cycle (e.g. mplhep) then
+    extended with the default 'tab:' colors if needed.
+    """
+
+    os.makedirs(os.path.dirname(path_plot), exist_ok=True)
+
+    # 1) Build color list from current cycle + tab colors
+    base_cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    tab_cycle  = plt.rcParams['axes.prop_cycle'].by_key()['color'][::-1]
+    colors     = (base_cycle + tab_cycle)[:model.n_cats]
+
+    cmap  = ListedColormap(colors)
+    bounds = np.arange(model.n_cats+1) - 0.5
+    norm   = BoundaryNorm(bounds, model.n_cats)
+
+    # 2) Extract GMM params
+    logits  = model.mixture_logits.numpy()
+    weights = np.exp(logits - logits.max())
+    weights /= weights.sum()
+
+    raw_means = model.means.numpy()
+    if model.dim == 1:
+        mus = expit(raw_means.flatten())[:,None]
+    else:
+        mus = tf.nn.softmax(raw_means, axis=1).numpy()
+
+    scales = model.get_scale_tril().numpy()
+    covs   = np.einsum('kij,kpj->kip', scales, scales)
+
+    # 3) Loop over 2D faces
+    for (i,j) in [(0,1),(0,2),(1,2)]:
+        k = ({0,1,2} - {i,j}).pop()
+
+        xs = np.linspace(0,1,resolution)
+        ys = np.linspace(0,1,resolution)
+        X, Y = np.meshgrid(xs, ys)
+        mask  = (X+Y <= 1.0)
+
+        pts = np.zeros((mask.sum(),3))
+        pts[:,i] = X[mask]
+        pts[:,j] = Y[mask]
+        pts[:,k] = 1.0 - pts[:,i] - pts[:,j]
+
+        # compute log density + log weight
+        logps = np.zeros((pts.shape[0], model.n_cats))
+        for idx in range(model.n_cats):
+            rv = multivariate_normal(mean=mus[idx], cov=covs[idx], allow_singular=True)
+            logps[:,idx] = np.log(weights[idx]+1e-12) + rv.logpdf(pts)
+
+        assign = np.full(X.shape, np.nan)
+        assign_vals = np.argmax(logps, axis=1)
+        assign[mask] = assign_vals
+
+        # plotting
+        fig, ax = plt.subplots(figsize=(8,6))
+        ax.contourf(X, Y, assign, levels=bounds, cmap=cmap, norm=norm, alpha=0.6)
+        ax.contour (X, Y, assign, levels=bounds, colors='k', linewidths=0.8)
+
+        # bin labels
+        for b in range(model.n_cats):
+            xi = X[assign==b]
+            yi = Y[assign==b]
+            if xi.size:
+                ax.text(xi.mean(), yi.mean(), str(b),
+                        color=colors[b], fontsize=10,
+                        fontweight='bold', ha='center', va='center')
+
+        # legend
+        proxies = [plt.Rectangle((0,0),1,1, color=colors[b]) for b in range(model.n_cats)]
+        ax.legend(proxies, [f"Bin {b}" for b in range(model.n_cats)],
+                  ncol=2, fontsize=9, loc='upper right')
+
+        ax.set_xlim(0,1)
+        ax.set_ylim(0,1)
+        ax.set_xlabel(f"Discriminant node {i}")
+        ax.set_ylabel(f"Discriminant node {j}")
+
+        plt.tight_layout()
+        fig.savefig(path_plot.replace(".pdf", f"_dims_{i}_{j}.pdf"))
+        plt.close(fig)
+
 def plot_yield_vs_uncertainty(
         B_sorted,
         rel_unc_sorted,
@@ -480,6 +575,7 @@ def plot_yield_vs_uncertainty(
     fig.savefig(output_filename)
     plt.close(fig)
 
+
 def plot_significance_comparison(
         equidistant_bins,
         equidistant_Z,
@@ -506,4 +602,48 @@ def plot_significance_comparison(
     plt.tight_layout()
     fig.savefig(output_filename)
     plt.close(fig)
-# ------------------------------------------------------------
+
+
+def plot_significance_comparison(
+        baseline_results: dict,
+        optimized_results: dict,
+        output_filename: str,
+        fig_size=(8,6)):
+    """
+    Plots baseline vs. optimized significance for one or more signals.
+
+    Parameters
+    ----------
+    baseline_results : dict
+        Maps each signal name (str) to a dict {n_bins: Z_value, ...}
+    optimized_results : dict
+        Same mapping for the GATO-optimized runs.
+    output_filename : str
+        Where to save the figure.
+    """
+    fig, ax = plt.subplots(figsize=fig_size)
+
+    # pick distinct markers for baseline vs. optimized:
+    base_style = dict(marker='o', linestyle='-')
+    opt_style  = dict(marker='s', linestyle='--')
+
+    for sig in baseline_results:
+        # get sorted bins & values
+        b_bins = np.array(sorted(baseline_results[sig].keys()))
+        b_Z    = np.array([baseline_results[sig][nb] for nb in b_bins])
+
+        o_bins = np.array(sorted(optimized_results[sig].keys()))
+        o_Z    = np.array([optimized_results[sig][nb] for nb in o_bins])
+
+        ax.plot(b_bins, b_Z, label=f"Baseline {sig}", **base_style)
+        ax.plot(o_bins, o_Z, label=f"Optimized {sig}", **opt_style)
+
+    ax.set_xlabel("Number of bins", fontsize=22)
+    ax.set_ylabel("Significance", fontsize=22)
+    ax.legend(fontsize=14)
+    ax.set_xlim(0, max(ax.get_xlim()[1], max(b_bins.max(), o_bins.max())*1.05))
+    ax.set_ylim(0, ax.get_ylim()[1]*1.05)
+
+    plt.tight_layout()
+    fig.savefig(output_filename)
+    plt.close(fig)

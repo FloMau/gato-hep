@@ -6,160 +6,15 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 import tensorflow_probability as tfp
 tfd = tfp.distributions
-from scipy.stats import multivariate_normal
 # Append the repo root to sys.path so that we can import our core modules.
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
-from diffcat_optimizer.differentiable_categories import asymptotic_significance, DiffCatModelMultiDimensional, low_bkg_penalty, compute_significance_from_hists
-from diffcat_optimizer.plotting_utils import plot_stacked_histograms, plot_history, plot_learned_gaussians, assign_bins_and_order, fill_histogram_from_assignments, visualize_bins_2d
+from diffcat_optimizer.differentiable_categories import asymptotic_significance, gato_gmm_model, low_bkg_penalty, high_bkg_uncertainty_penalty, compute_significance_from_hists
+from diffcat_optimizer.plotting_utils import plot_stacked_histograms, plot_history, plot_learned_gaussians, assign_bins_and_order, fill_histogram_from_assignments, visualize_bins_2d, plot_bin_boundaries_simplex, plot_yield_vs_uncertainty, plot_significance_comparison
 from diffcat_optimizer.utils import df_dict_to_tensors, create_hist
+from diffcat_optimizer.data_generation import generate_toy_data_3class_3D
 
-# ----------------------------------------------------------------------------
-# 3D Toy Data Generator for 3-class classifier
-# Background consists of 5 individual Gaussian processes
-# ----------------------------------------------------------------------------
-def generate_toy_data_3class_3D(
-    n_signal1=100000, n_signal2=100000,
-    n_bkg1=100000, n_bkg2=80000, n_bkg3=50000, n_bkg4=20000, n_bkg5=10000,
-    xs_signal1=0.5, xs_signal2=0.1,
-    xs_bkg1=100, xs_bkg2=80, xs_bkg3=50, xs_bkg4=20, xs_bkg5=10,
-    lumi=100.0, noise_scale=0.2, seed=None
-):
-    """
-    Generate 3D Gaussian data for 2 signals and 5 backgrounds.
-    Compute 3-class softmax output on noisy 3D logits.
-    Returns dict of DataFrames with 'NN_output' (3-vector) and 'weight'.
-    """
-    if seed is not None:
-        np.random.seed(seed)
-
-    processes = ["signal1","signal2","bkg1","bkg2","bkg3","bkg4","bkg5"]
-    means = {
-        "signal1": np.array([ 1.5, -1.0, -1.0]),
-        "signal2": np.array([-1.0,  1.5, -1.0]),
-        "bkg1":    np.array([-0.5, -0.5,  1.0]),
-        "bkg2":    np.array([0.5, -0.5,  0.8]),
-        "bkg3":    np.array([0.5, 0.5,  -0.6]),
-        "bkg4":    np.array([-0.5, 1.0,  -0.4]),
-        "bkg5":    np.array([-0.5, 0.5,  -0.2])
-    }
-    cov = np.eye(3)*1.0 + 0.2*(np.ones((3,3))-np.eye(3))
-    counts = {
-        "signal1": n_signal1, "signal2": n_signal2,
-        "bkg1": n_bkg1, "bkg2": n_bkg2, "bkg3": n_bkg3,
-        "bkg4": n_bkg4, "bkg5": n_bkg5
-    }
-    xs = {
-        "signal1": xs_signal1, "signal2": xs_signal2,
-        "bkg1": xs_bkg1, "bkg2": xs_bkg2, "bkg3": xs_bkg3,
-        "bkg4": xs_bkg4, "bkg5": xs_bkg5
-    }
-    raw = {p: np.random.multivariate_normal(means[p], cov, size=counts[p]) for p in processes}
-    for p in processes:
-        raw[p] *= np.random.normal(loc=1.0, scale=noise_scale, size=raw[p].shape)
-    nn_out = {p: tf.nn.softmax(tf.constant(raw[p],dtype=tf.float32),axis=1).numpy() for p in processes}
-    data = {}
-    for p in processes:
-        weight = xs[p] * lumi / counts[p]
-        data[p] = pd.DataFrame({"NN_output": list(nn_out[p]), "weight": weight})
-    return data
-
-def generate_toy_data_3class_3D_Nitish(
-    n_signal1=100000, n_signal2=100000,
-    n_bkg1=100000, n_bkg2=80000, n_bkg3=50000, n_bkg4=20000, n_bkg5=10000,
-    xs_signal1=0.5, xs_signal2=0.1,
-    xs_bkg1=100, xs_bkg2=80, xs_bkg3=50, xs_bkg4=20, xs_bkg5=10,
-    lumi=100.0, noise_scale=0.2, seed=None
-):
-    """
-    Generate 3D Gaussian data for 2 signal and 5 background classes.
-    For each point, compute likelihood-ratio-based 3-class scores:
-        [score_signal1, score_signal2, score_background]
-    Returns dict of DataFrames with columns: 'NN_output' (3-vector) and 'weight'.
-    """
-    if seed is not None:
-        np.random.seed(seed)
-
-    processes = ["signal1", "signal2", "bkg1", "bkg2", "bkg3", "bkg4", "bkg5"]
-
-    means = {
-        "signal1": np.array([1.5, -1.0, -1.0]),
-        "signal2": np.array([-1.0, 1.5, -1.0]),
-        "bkg1":    np.array([-0.5, -0.5, 1.0]),
-        "bkg2":    np.array([0.5, -0.5, 0.8]),
-        "bkg3":    np.array([0.5, 0.5, -0.6]),
-        "bkg4":    np.array([-0.5, 1.0, -0.4]),
-        "bkg5":    np.array([-0.5, 0.5, -0.2])
-    }
-
-    # Slightly correlated 3D Gaussian
-    cov = np.eye(3)*1.0 + 0.2*(np.ones((3,3)) - np.eye(3))
-
-    counts = {
-        "signal1": n_signal1, "signal2": n_signal2,
-        "bkg1": n_bkg1, "bkg2": n_bkg2, "bkg3": n_bkg3,
-        "bkg4": n_bkg4, "bkg5": n_bkg5
-    }
-
-    xs = {
-        "signal1": xs_signal1, "signal2": xs_signal2,
-        "bkg1": xs_bkg1, "bkg2": xs_bkg2, "bkg3": xs_bkg3,
-        "bkg4": xs_bkg4, "bkg5": xs_bkg5
-    }
-
-    # 1. Sample raw 3D data
-    raw = {
-        p: np.random.multivariate_normal(mean=means[p], cov=cov, size=counts[p])
-        for p in processes
-    }
-
-    # 2. Add multiplicative noise
-    for p in processes:
-        noise = np.random.normal(loc=1.0, scale=noise_scale, size=raw[p].shape)
-        raw[p] *= noise
-
-    # 3. Build PDFs
-    pdfs = {
-        p: multivariate_normal(mean=means[p], cov=cov)
-        for p in processes
-    }
-
-    # 4. Combined background PDF with proper cross-section weighting
-    bkg_processes = [p for p in processes if p.startswith("bkg")]
-    total_bkg_xs = sum(xs[p] for p in bkg_processes)
-
-    def combined_bkg_pdf(X):
-        return sum(
-            (xs[p] / total_bkg_xs) * pdfs[p].pdf(X)
-            for p in bkg_processes
-        )
-
-    # 5. Compute likelihood-ratio-based scores
-    data = {}
-    for proc in processes:
-        X = raw[proc]
-        weight = xs[proc] * lumi / counts[proc]
-
-        p1 = pdfs["signal1"].pdf(X)
-        p2 = pdfs["signal2"].pdf(X)
-        pb = combined_bkg_pdf(X)
-
-        total = p1 + p2 + pb + 1e-12  # avoid divide-by-zero
-
-        score1 = p1 / total
-        score2 = p2 / total
-        score_bkg = pb / total
-
-        nn_output = np.stack([score1, score2, score_bkg], axis=1)
-        nn_output = [row for row in nn_output]
-
-        data[proc] = pd.DataFrame({
-            "NN_output": nn_output,
-            "weight": weight
-        })
-
-    return data
 
 def convert_data_to_tensors(data):
     tensor_data = {}
@@ -171,21 +26,21 @@ def convert_data_to_tensors(data):
     return tensor_data
 
 # Model definition
-class DiffCatModelExample3D(DiffCatModelMultiDimensional):
-    """
-    Two channels: signal1 vs (signal2+bkg), signal2 vs (signal1+bkg).
-    Loss = -sqrt(Z1 * Z2).
-    """
+class gato_3D(gato_gmm_model):
     def call(self, data_dict):
         log_mix = tf.nn.log_softmax(self.mixture_logits)
         scale_tril = self.get_scale_tril()
         means = self.means
-        sig1_y = tf.zeros(self.n_cats)
-        sig2_y = tf.zeros(self.n_cats)
-        bkg_y  = tf.zeros(self.n_cats)
-        for proc, tensors in data_dict.items():
-            x = tensors['NN_output']  # (N,3)
-            w = tensors['weight']     # (N,)
+        sig1_y = tf.zeros(self.n_cats, dtype=tf.float32)
+        sig2_y = tf.zeros(self.n_cats, dtype=tf.float32)
+        bkg_y  = tf.zeros(self.n_cats, dtype=tf.float32)
+        bkg_w2 = tf.zeros(self.n_cats, dtype=tf.float32)
+
+        for proc, t in data_dict.items():
+            x = t["NN_output"] # (N,3)
+            w = t["weight"]
+            w2 = w ** 2
+            # log‑pdf for each component
             log_probs = []
             for i in range(self.n_cats):
                 dist = tfd.MultivariateNormalTriL(
@@ -193,28 +48,32 @@ class DiffCatModelExample3D(DiffCatModelMultiDimensional):
                     scale_tril=scale_tril[i]
                 )
                 log_probs.append(dist.log_prob(x))
-            log_probs = tf.stack(log_probs, axis=1)
-            log_joint = log_probs + log_mix
-            memberships = tf.nn.softmax(log_joint / self.temperature, axis=1)
-            yields = tf.reduce_sum(memberships * tf.expand_dims(w,1), axis=0)
-            if proc == 'signal1':
+            log_probs = tf.stack(log_probs, axis=1) # (N,n_cats)
+            memberships = tf.nn.softmax((log_probs + log_mix) / self.temperature, axis=1)
+
+            yields = tf.reduce_sum(memberships * w[:,None],  axis=0)
+            sumw2  = tf.reduce_sum(memberships * w2[:,None], axis=0)
+
+            if proc == "signal1":
                 sig1_y += yields
-            elif proc == 'signal2':
+            elif proc == "signal2":
                 sig2_y += yields
             else:
-                bkg_y += yields
-        Z1 = tf.sqrt(tf.reduce_sum(tf.square(asymptotic_significance(sig1_y, bkg_y + sig2_y))))
-        Z2 = tf.sqrt(tf.reduce_sum(tf.square(asymptotic_significance(sig2_y, bkg_y + sig1_y))))
-        return -tf.sqrt(Z1 * Z2), tf.reduce_sum(bkg_y)
+                bkg_y  += yields
+                bkg_w2 += sumw2
+
+        Z1 = tf.sqrt(tf.reduce_sum(asymptotic_significance(sig1_y, bkg_y + sig2_y)**2))
+        Z2 = tf.sqrt(tf.reduce_sum(asymptotic_significance(sig2_y, bkg_y + sig1_y)**2))
+        return -tf.sqrt(Z1 * Z2), bkg_y, bkg_w2
+
 
 # Main execution
-if __name__ == '__main__':
+def main():
 
     path_plots = './examples/3D_2signals_softmax_example/Plots/'
     os.makedirs(path_plots, exist_ok=True)
     # Generate data & convert
-    # data = generate_toy_data_3class_3D(seed=42)
-    data = generate_toy_data_3class_3D_Nitish(seed=42, noise_scale=0.5)
+    data = generate_toy_data_3class_3D(seed=42, noise_scale=0.5)
     tensor_data = convert_data_to_tensors(data)
 
     # Baseline significance with simple binning
@@ -224,10 +83,8 @@ if __name__ == '__main__':
     for dim in range(3):
         _hists = {}
         for proc, df in data.items():
-            print(proc)
             vals = np.stack(df['NN_output'].values)[:,dim]
             _hists[proc] = create_hist(vals, df['weight'].values, bins=50, low=0.0, high=1.0)
-            print(_hists[proc])
         for use_log in [True, False]:
             log_suffix = "_log" if use_log else ""
             plot_stacked_histograms(
@@ -287,34 +144,46 @@ if __name__ == '__main__':
                     log=logscale,
                 )
 
-    # Optimization via DiffCatModelExample3D
+    # Optimization via gato_3D
     path_gato_plots = path_plots + "gato/"
     os.makedirs(path_gato_plots, exist_ok=True)
 
     path_gato_plots_bins_2d = path_gato_plots + "2D_bin_visualizations/"
     os.makedirs(path_gato_plots_bins_2d, exist_ok=True)
 
-    lam = 0.01
-    optimized_results = {'signal1':{}, 'signal2':{}}
-    for n_cats in [3, 10]:
-        @tf.function
-        def train_step(model, data_dict, optimizer, lam=0.0):
-            with tf.GradientTape() as tape:
-                loss, B = model.call(data_dict)
-                total = loss + (lam * low_bkg_penalty(B) if lam else 0)
-            grads = tape.gradient(total, model.trainable_variables)
-            optimizer.apply_gradients(zip(grads, model.trainable_variables))
-            return total, loss
+    lam_yield = 0
+    lam_unc = 0
 
-        model = DiffCatModelExample3D(n_cats=n_cats, dim=3, temperature=0.25)
+    optimized_results = {'signal1':{}, 'signal2':{}}
+    for n_cats in [10]:
+        @tf.function
+        def train_step(model, tensor_data, optimizer, lam_yield=0.0, lam_unc=0.0):
+            with tf.GradientTape() as tape:
+                loss, B, B_sumw2 = model.call(tensor_data)
+
+                pen_yield = low_bkg_penalty(B, threshold=10.0, steepness=10.0)
+                pen_unc = high_bkg_uncertainty_penalty(B_sumw2, B, rel_threshold=0.20)
+
+                total_loss = loss + lam_yield * pen_yield + lam_unc * pen_unc
+            grads = tape.gradient(total_loss, model.trainable_variables)
+            optimizer.apply_gradients(zip(grads, model.trainable_variables))
+            return total_loss, loss, pen_yield, pen_unc
+
+        model = gato_3D(n_cats=n_cats, dim=3, temperature=0.1)
         optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
-        epochs = 250
-        loss_history = []
+        epochs = 300
+
+        loss_history, penalty_yield_history, penalty_unc_history = [], [], []
+
         for epoch in range(epochs):
-            total_loss, base_loss = train_step(model, tensor_data, optimizer, lam=lam)
-            loss_history.append(base_loss.numpy())
+            total_loss, loss, pen_yield, pen_unc = train_step(model, tensor_data, optimizer, lam_yield=lam_yield, lam_unc=lam_unc)
+
+            loss_history.append(loss.numpy())
+            penalty_yield_history.append(pen_yield.numpy())
+            penalty_unc_history.append(pen_unc.numpy())
+
             if epoch % 10 == 0:
-                print(f'[Epoch {epoch}] base_loss={base_loss.numpy():.3f}')
+                print(f'[Epoch {epoch}] base_loss={loss.numpy():.3f}')
 
         # Assign bins and fill histograms
         assignments, order, _, inv_map = assign_bins_and_order(model, data)
@@ -373,14 +242,22 @@ if __name__ == '__main__':
         )
         print(f"Saved optimized log plot {opt_plot_filename.replace('.pdf','_log.pdf')}")
 
-        # 1) Plot loss history
-        plot_history(
-            loss_history,
-            os.path.join(path_gato_plots, f"history_loss_{n_cats}bins.pdf"),
-            y_label="Negative geometric mean significance",
-            x_label="Epoch",
-            boundaries=False,
-            title="Loss History"
+        plot_history(loss_history,
+                    os.path.join(path_gato_plots, f"loss_{n_cats}.pdf"),
+                    y_label=r"Geometric mean $(Z_1, Z_2)$",
+                    x_label="Epoch",
+        )
+
+        plot_history(penalty_yield_history,
+                    os.path.join(path_gato_plots, f"penalty_yield_{n_cats}.pdf"),
+                    y_label="Low-bkg. penalty",
+                    x_label="Epoch",
+        )
+
+        plot_history(penalty_unc_history,
+                    os.path.join(path_gato_plots, f"penalty_unc_{n_cats}.pdf"),
+                    y_label="High-unc. penalty",
+                    x_label="Epoch",
         )
 
         # 2) Plot learned Gaussian ellipses in all 2D projections
@@ -397,23 +274,31 @@ if __name__ == '__main__':
             )
 
         path_plots_bins_2d = os.path.join(path_plots, )
-        visualize_bins_2d(
-            data_dict=data,
-            var_label="NN_output",
-            n_bins=n_cats,
-            path_plot=os.path.join(path_gato_plots_bins_2d, f"{n_cats}_bins.pdf")
+
+        plot_bin_boundaries_simplex(
+            model,
+            path_plot=os.path.join(path_gato_plots_bins_2d, f"{n_cats}_bins_new.pdf"),
         )
 
-    # Comparison plot
-    fig, ax = plt.subplots()
-    for sig in ['signal1','signal2']:
-        base = baseline_results[sig]
-        opt  = optimized_results[sig]
-        ax.plot(2*np.array(list(base.keys()))+1, np.array(list(base.values())), marker='o', label=f'Baseline {sig}')
-        ax.plot(np.array(list(opt.keys())),  np.array(list(opt.values())),  marker='s', linestyle='--', label=f'Optimized {sig}')
-    ax.set_xlabel('Number of bins')
-    ax.set_ylabel('Significance')
-    ax.legend()
-    comp_file = os.path.join(path_gato_plots, 'significance_comparison.pdf')
-    plt.savefig(comp_file)
-    print(f'Saved comparison plot to {comp_file}')
+
+        # get hard‑assignment stats (works for multi‑D)
+        B_sorted, rel_unc_sorted, _ = model.compute_hard_bkg_stats(tensor_data)
+
+        plot_yield_vs_uncertainty(
+            B_sorted,
+            rel_unc_sorted,
+            output_filename=os.path.join(
+                path_gato_plots, f"yield_vs_unc_{n_cats}bins.pdf"
+            ),
+        )
+
+    plot_significance_comparison(
+        baseline_results=baseline_results,
+        optimized_results=optimized_results,
+        output_filename=os.path.join(path_gato_plots, "significance_comparison.pdf"),
+    )
+
+
+if __name__ == '__main__':
+
+    main()
