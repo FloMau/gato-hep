@@ -402,8 +402,8 @@ def visualize_bins_2d(data_dict, var_label, n_bins, path_plot):
         all_scores = []
         all_bins = []
         for df in data_dict.values():
-            arr = np.vstack(df[var_label].to_numpy())[:1000]
-            bins = df['bin_index'].to_numpy()[:1000]
+            arr = np.vstack(df[var_label].to_numpy())[:10000]
+            bins = df['bin_index'].to_numpy()[:10000]
             all_scores.append(arr)
             all_bins.append(bins)
         scores = np.vstack(all_scores)
@@ -429,3 +429,81 @@ def visualize_bins_2d(data_dict, var_label, n_bins, path_plot):
         fig.savefig(path_plot.replace(".pdf", f"_{dims[0]}_{dims[1]}.pdf"))
         fig.clf()
 
+def plot_yield_vs_uncertainty(
+        B_sorted,
+        rel_unc_sorted,
+        output_filename,
+        x_label="Bin index",
+        y_label_left="Background yield",
+        y_label_right="Rel. stat. unc.",
+        fig_size=(8, 6),
+        bar_kwargs_left=None,
+        bar_kwargs_right=None):
+    """
+    Dual-axis bar plot with displaced bars:
+        • left axis  (color C0) shows B
+        • right axis (color C1) shows sigma/B
+    """
+    B_sorted       = np.asarray(B_sorted)
+    rel_unc_sorted = np.asarray(rel_unc_sorted)
+    bins           = np.arange(len(B_sorted))
+    width          = 0.4             # bar width
+    fontsize       = 22
+
+    # default styles
+    left_style  = dict(alpha=0.6, color="C0", width=width)
+    right_style = dict(alpha=0.6, color="C1", width=width)
+
+    if bar_kwargs_left:
+        left_style.update(bar_kwargs_left)
+    if bar_kwargs_right:
+        right_style.update(bar_kwargs_right)
+
+    fig, ax1 = plt.subplots(figsize=fig_size)
+
+    # background yield, shifted left
+    ax1.bar(bins - width / 2, B_sorted, **left_style)
+    ax1.set_ylabel(y_label_left, color=left_style["color"], fontsize=fontsize)
+    ax1.tick_params(axis="y", colors=left_style["color"])
+    ax1.spines["left"].set_color(left_style["color"])
+
+    # relative uncertainty, shifted right
+    ax2 = ax1.twinx()
+    ax2.bar(bins + width / 2, rel_unc_sorted, **right_style)
+    ax2.set_ylabel(y_label_right, color=right_style["color"], fontsize=fontsize)
+    ax2.tick_params(axis="y", colors=right_style["color"])
+    ax2.spines["right"].set_color(right_style["color"])
+
+    ax1.set_xlabel(x_label, fontsize=fontsize)
+    ax1.set_xticks(bins)
+    fig.tight_layout()
+    fig.savefig(output_filename)
+    plt.close(fig)
+
+def plot_significance_comparison(
+        equidistant_bins,
+        equidistant_Z,
+        optimized_bins,
+        optimized_Z,
+        output_filename,
+        fig_size=(8, 6)):
+    """
+    Compare overall significance for equidistant vs. GATO binnings.
+    """
+    fig, ax = plt.subplots(figsize=fig_size)
+
+    ax.plot(equidistant_bins, equidistant_Z,
+            marker="o", linestyle="-", label="Equidistant binning")
+    ax.plot(optimized_bins, optimized_Z,
+            marker="s", linestyle="--", label="GATO binning")
+
+    ax.set_xlabel("Number of bins", fontsize=22)
+    ax.set_ylabel("Overall significance", fontsize=22)
+    ax.legend(fontsize=18)
+    ax.set_xlim(0, ax.get_xlim()[1])
+    ax.set_ylim(0, ax.get_ylim()[1])
+
+    plt.tight_layout()
+    fig.savefig(output_filename)
+    plt.close(fig)
+# ------------------------------------------------------------

@@ -6,14 +6,14 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 import tensorflow_probability as tfp
 tfd = tfp.distributions
-import hist
 from scipy.stats import multivariate_normal
 # Append the repo root to sys.path so that we can import our core modules.
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
-from diffcat_optimizer.differentiable_categories import asymptotic_significance, DiffCatModelMultiDimensional, low_bkg_penalty
+from diffcat_optimizer.differentiable_categories import asymptotic_significance, DiffCatModelMultiDimensional, low_bkg_penalty, compute_significance_from_hists
 from diffcat_optimizer.plotting_utils import plot_stacked_histograms, plot_history, plot_learned_gaussians, assign_bins_and_order, fill_histogram_from_assignments, visualize_bins_2d
+from diffcat_optimizer.utils import df_dict_to_tensors, create_hist
 
 # ----------------------------------------------------------------------------
 # 3D Toy Data Generator for 3-class classifier
@@ -161,14 +161,6 @@ def generate_toy_data_3class_3D_Nitish(
 
     return data
 
-# Helpers
-
-def create_hist(vals, weights=None, bins=50, low=0.0, high=1.0, name="x"):
-    h = hist.Hist.new.Reg(bins, low, high, name=name).Weight()
-    h.fill(vals, weight=weights)
-    return h
-
-
 def convert_data_to_tensors(data):
     tensor_data = {}
     for proc, df in data.items():
@@ -177,13 +169,6 @@ def convert_data_to_tensors(data):
             "weight": tf.constant(df['weight'].values, dtype=tf.float32)
         }
     return tensor_data
-
-
-def compute_significance(h_sig, h_bkgs):
-    B = sum(h.values() for h in h_bkgs)
-    S = h_sig.values()
-    Z = asymptotic_significance(tf.constant(S), tf.constant(B))
-    return np.sqrt(np.sum(Z.numpy()**2))
 
 # Model definition
 class DiffCatModelExample3D(DiffCatModelMultiDimensional):
@@ -229,7 +214,7 @@ if __name__ == '__main__':
     os.makedirs(path_plots, exist_ok=True)
     # Generate data & convert
     # data = generate_toy_data_3class_3D(seed=42)
-    data = generate_toy_data_3class_3D_Nitish(seed=42)
+    data = generate_toy_data_3class_3D_Nitish(seed=42, noise_scale=0.5)
     tensor_data = convert_data_to_tensors(data)
 
     # Baseline significance with simple binning
@@ -252,7 +237,7 @@ if __name__ == '__main__':
                 signal_labels=['Signal1 x100', 'Signal2 x500'],
                 log=use_log,
                 output_filename=os.path.join(path_plots, f"data_dim_{dim}{log_suffix}.pdf"),
-                axis_labels=("NN discriminant node {dim}", "Events"),
+                axis_labels=(f"NN discriminant node {dim}", "Events"),
             )
 
     for nbins in [2, 5, 10, 20]:
@@ -267,7 +252,7 @@ if __name__ == '__main__':
             else:
                 bkg_h1.append(create_hist(vals1[mask1], df['weight'].values[mask1], bins=nbins, low=0.33, high=1.0))
                 bkg_labels1.append(proc)
-        Z1 = compute_significance(h_sig1, bkg_h1)
+        Z1 = compute_significance_from_hists(h_sig1, bkg_h1)
         baseline_results['signal1'][nbins] = Z1
 
         # Signal2 channel
@@ -280,7 +265,7 @@ if __name__ == '__main__':
             else:
                 bkg_h2.append(create_hist(vals2[mask2], df['weight'].values[mask2], bins=nbins, low=0.33, high=1.0))
                 bkg_labels2.append(proc)
-        Z2 = compute_significance(h_sig2, bkg_h2)
+        Z2 = compute_significance_from_hists(h_sig2, bkg_h2)
         baseline_results['signal2'][nbins] = Z2
 
         # Plot baseline histograms
@@ -309,8 +294,9 @@ if __name__ == '__main__':
     path_gato_plots_bins_2d = path_gato_plots + "2D_bin_visualizations/"
     os.makedirs(path_gato_plots_bins_2d, exist_ok=True)
 
+    lam = 0.01
     optimized_results = {'signal1':{}, 'signal2':{}}
-    for n_cats in [3, 10, 20]:
+    for n_cats in [3, 10]:
         @tf.function
         def train_step(model, data_dict, optimizer, lam=0.0):
             with tf.GradientTape() as tape:
@@ -320,12 +306,12 @@ if __name__ == '__main__':
             optimizer.apply_gradients(zip(grads, model.trainable_variables))
             return total, loss
 
-        model = DiffCatModelExample3D(n_cats=n_cats, dim=3, temperature=1.0)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.02)
-        epochs = 150
+        model = DiffCatModelExample3D(n_cats=n_cats, dim=3, temperature=0.25)
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
+        epochs = 250
         loss_history = []
         for epoch in range(epochs):
-            total_loss, base_loss = train_step(model, tensor_data, optimizer)
+            total_loss, base_loss = train_step(model, tensor_data, optimizer, lam=lam)
             loss_history.append(base_loss.numpy())
             if epoch % 10 == 0:
                 print(f'[Epoch {epoch}] base_loss={base_loss.numpy():.3f}')
@@ -344,14 +330,14 @@ if __name__ == '__main__':
         opt_bkg_hists = [filled['bkg1'], filled['bkg2'], filled['bkg3'], filled['bkg4'], filled['bkg5']]
 
         # Signal1 channel: other signal + all bkg are background
-        Z1_opt = compute_significance(
+        Z1_opt = compute_significance_from_hists(
             filled['signal1'],
             opt_bkg_hists + [filled['signal2']]
         )
         optimized_results['signal1'][n_cats] = Z1_opt
 
         # Signal2 channel
-        Z2_opt = compute_significance(
+        Z2_opt = compute_significance_from_hists(
             filled['signal2'],
             opt_bkg_hists + [filled['signal1']]
         )

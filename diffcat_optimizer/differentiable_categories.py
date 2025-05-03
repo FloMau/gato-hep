@@ -1,6 +1,7 @@
 import tensorflow as tf
 import numpy as np
 from scipy.stats import norm
+from scipy.special import expit
 import tensorflow_probability as tfp
 tfd = tfp.distributions
 
@@ -73,25 +74,44 @@ def calculate_boundaries(raw_boundaries):
 
     return boundaries[:-1] # ignore last value which is always 1.0
 
-
-def low_bkg_penalty(b_nonres_cat, threshold=10.0, steepness=10):
+def low_bkg_penalty(bkg_yields, threshold=10.0, steepness=10):
     """
-    b_nonres_cat: tf.Tensor of shape [ncat], the nonres yields in each category 
+    bkg_yields: tf.Tensor of shape [ncat], the background yields in each category 
                   (over the entire mass range).
-    We define penalty_j = alpha * sigmoid( steepness * (threshold - b_nonres_cat[j]) ).
+    We define penalty_j = alpha * sigmoid( steepness * (threshold - bkg_yields[j]) ).
     Then we sum over all categories.
     """
-    # clamp it to avoid negative yields
-    safe_b = tf.maximum(b_nonres_cat, 0.0)
-    # define x = threshold - safe_b
-    x = threshold - safe_b
-    # define s = sigmoid( x * steepness )
-    step = safe_sigmoid(x, steepness)
     # penalty per category
-    penalty_vals = step * (b_nonres_cat - threshold)**2
+    penalty_vals = (
+        tf.nn.relu(threshold - bkg_yields)
+    )**2
     # sum over categories
     total_penalty = tf.reduce_sum(penalty_vals)
+
     return total_penalty
+
+def high_bkg_uncertainty_penalty(bkg_sumsq, bkg_yields, rel_threshold=0.2):
+    """
+    Penalize bins whose *relative* MC uncertainty exceeds rel_threshold.
+    
+    bkg_sumsq:   tf.Tensor [ncat], sum of w_i^2 in each bin
+    bkg_yields:  tf.Tensor [ncat], sum of w_i in each bin
+    rel_threshold: float, e.g. 0.2 for 20% relative error
+    
+    penalty_j = max(σ_j / B_j - rel_threshold, 0)^2
+    total_penalty = sum_j penalty_j
+    """
+    # avoid division by zero
+    safe_B = tf.maximum(bkg_yields, 1e-8)
+    # σ_j = sqrt(sum_i w_i^2)
+    sigma = tf.sqrt(tf.maximum(bkg_sumsq, 0.0))
+    rel_unc = sigma / safe_B
+    
+    # only penalize above threshold
+    over = tf.nn.relu(rel_unc - rel_threshold)
+    penalty_per_bin = over**2
+    
+    return tf.reduce_sum(penalty_per_bin)
 
 
 class DifferentiableCutModel(tf.Module):
@@ -278,3 +298,111 @@ class DiffCatModelMultiDimensional(DifferentiableCutModel):
                 break
 
         return sorted(cuts)
+
+
+    def get_effective_boundaries_1d(self, n_steps: int = 100_000, return_mapping: bool = False):
+        """
+        Find the (n_cats‑1) crossing points and, if requested, return an
+        `order` array: `order[j]` = component index that defines bin *j*.
+        """
+        import numpy as np
+        from scipy.stats import norm
+        import tensorflow as tf
+
+        # --- effective (activated) parameters
+        w   = tf.nn.softmax(self.mixture_logits).numpy()           # (n,)
+        mu  = tf.math.sigmoid(self.means[:, 0]).numpy()            # (n,)
+        sig = self.get_scale_tril().numpy()[:, 0, 0]               # (n,)
+
+        # --- sort by mu but keep mapping
+        order = np.argsort(mu)          # component → ascending‑µ rank
+        w, mu, sig = w[order], mu[order], sig[order]
+
+        # --- dense grid
+        x = np.linspace(0.0, 1.0, n_steps)
+        pdf = np.vstack([w_i * norm.pdf(x, loc=mu_i, scale=s_i)
+                        for w_i, mu_i, s_i in zip(w, mu, sig)]).T
+        winners = np.argmax(pdf, axis=1)
+        jumps   = np.where(winners[:-1] != winners[1:])[0]
+
+        cuts = [0.5*(x[j]+x[j+1]) for j in jumps[: self.n_cats-1]]
+        cuts.sort()
+
+        if return_mapping:
+            return cuts, order           # `order[j]` is original component id
+        return cuts
+
+
+    def compute_hard_bkg_stats(self, data_dict, low=0.0, high=1.0, eps=1e-8):
+        """
+        Hard-assign each background event to its most-likely Gaussian component,
+        then compute per-bin background yield B_j and relative uncertainty σ_j/B_j,
+        and return them sorted by bin position in 1D or significance in multi-D.
+
+        Returns:
+          B_sorted       np.array (n_cats,)
+          rel_unc_sorted np.array (n_cats,)
+          order          np.array mapping original→sorted component indices
+        """
+
+        # 1) pull out the exact same params you used in training
+        # mixture logits → log_mix
+        raw_logits = self.mixture_logits.numpy()                      # (n_cats,)
+        log_mix    = tf.nn.log_softmax(raw_logits).numpy()           # (n_cats,)
+        # means → sigmoid(raw_means)
+        raw_means  = self.means.numpy().flatten()                    # (n_cats,)
+        if self.dim == 1:
+            # map raw means into [0,1]
+            mu_act = expit(raw_means.flatten())
+        else:
+            # map raw means into valid vectors via softmax across dims for each component
+            mu_act = tf.nn.softmax(raw_means, axis=1).numpy()
+        # covariance
+        scales = self.get_scale_tril().numpy()
+
+        n_cats = self.n_cats
+
+        # 2) collect all background events
+        X_parts, W_parts = [], []
+        for proc,t in data_dict.items():
+            if proc == "signal": continue
+            arr = np.asarray(t["NN_output"]).reshape(-1,1)
+            X_parts.append(arr)
+            W_parts.append(np.asarray(t["weight"]))
+        X = np.concatenate(X_parts, axis=0)   # (N,1)
+        W = np.concatenate(W_parts)          # (N,)
+
+        # 3) compute the exact same log-joint as in training
+        logj = np.zeros((len(W), n_cats))
+        for i in range(n_cats):
+            dist = tfd.MultivariateNormalTriL(loc=mu_act[i], scale_tril=scales[i])
+            logj[:,i] = dist.log_prob(X).numpy() + log_mix[i]
+
+        # 4) hard-assign to the winning component
+        comp = np.argmax(logj, axis=1)
+
+        # 5) accumulate B and B2
+        B = np.zeros(n_cats)
+        B2= np.zeros(n_cats)
+        for i in range(n_cats):
+            sel = (comp==i)
+            if not sel.any(): continue
+            w_i = W[sel]
+            B[i]  = w_i.sum()
+            B2[i] = (w_i**2).sum()
+
+        # 6) compute rel-uncertainty
+        sigma  = np.sqrt(np.maximum(B2,0.0))
+        rel_unc= sigma/np.maximum(B,eps)
+
+        # 8) determine sort order
+        if self.dim == 1:
+            _, order = self.get_effective_boundaries_1d(return_mapping=True)
+        else:
+            # multi-D: sort by per-bin Z
+            from diffcat_optimizer.differentiable_categories import asymptotic_significance
+            S_dummy = tf.zeros_like(tf.constant(B, dtype=tf.float32))
+            Zbins = asymptotic_significance(S_dummy, tf.constant(B, dtype=tf.float32)).numpy()
+            order = np.argsort(-Zbins)
+
+        return B[order], rel_unc[order], order
