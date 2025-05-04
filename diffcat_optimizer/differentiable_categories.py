@@ -204,7 +204,6 @@ class gato_gmm_model(tf.Module):
         return B[order], rel_unc[order], order
 
 
-
 def asymptotic_significance(S, B, eps=1e-9):
     """
     Default asymptotic significance function with S/sqrt(B) approximation at very low S/B.

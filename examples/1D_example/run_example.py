@@ -12,7 +12,7 @@ repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 
-from diffcat_optimizer.plotting_utils import plot_stacked_histograms, plot_history, plot_yield_vs_uncertainty, plot_significance_comparison
+from diffcat_optimizer.plotting_utils import plot_stacked_histograms, plot_history, plot_yield_vs_uncertainty, plot_significance_comparison, plot_gmm_1d
 from diffcat_optimizer.differentiable_categories import asymptotic_significance, gato_gmm_model, low_bkg_penalty, compute_significance_from_hists, high_bkg_uncertainty_penalty
 from diffcat_optimizer.utils import df_dict_to_tensors, create_hist
 from diffcat_optimizer.data_generation import generate_toy_data_1D
@@ -106,7 +106,7 @@ def main():
 
     # For demonstration, we compare multiple binning schemes.
     equidistant_binning_options = [2, 5, 10, 20]
-    gato_binning_options = [3, 20]
+    gato_binning_options = [3, 10]
     equidistant_significances = {}
     optimized_significances = {}
 
@@ -300,6 +300,13 @@ def main():
             B_sorted,
             rel_unc_sorted,
             output_filename=path_plots + f"yield_vs_uncertainty_{nbins}bins_sorted.pdf",
+        )
+        # plot the learned GMM in 1D
+        plot_gmm_1d(
+            model,
+            output_filename=os.path.join(path_plots, f"gmm_components_{nbins}bins.pdf"),
+            x_range=(low, high),
+            n_points=1000
         )
 
     plot_significance_comparison(

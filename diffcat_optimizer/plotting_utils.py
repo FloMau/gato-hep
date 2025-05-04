@@ -7,7 +7,7 @@ import mplhep as hep
 plt.style.use(hep.style.ROOT)
 import hist
 from scipy.special import expit
-from scipy.stats import multivariate_normal
+from scipy.stats import multivariate_normal, norm
 import tensorflow as tf
 import tensorflow_probability as tfp
 tfd = tfp.distributions
@@ -623,6 +623,58 @@ def plot_significance_comparison(
     ax.set_xlim(0, max(ax.get_xlim()[1], max(b_bins.max(), o_bins.max())*1.05))
     ax.set_ylim(0, ax.get_ylim()[1]*1.05)
 
+    plt.tight_layout()
+    fig.savefig(output_filename)
+    plt.close(fig)
+
+def plot_gmm_1d(model,
+                output_filename,
+                x_range=(0.0, 1.0),
+                n_points=10000):
+    """
+    Plot the 1D GMM learned by `model`: each component's weighted PDF.
+    
+    Args
+    ----
+    model           : a trained GMM model with dim=1
+    output_filename : path to save the figure (.pdf/.png)
+    x_range         : (xmin, xmax) tuple over which to plot
+    n_points        : number of points in the x grid
+    """
+    # 1) build x grid
+    x = np.linspace(x_range[0], x_range[1], n_points)
+    
+    # 2) extract params
+    eff = model.get_effective_parameters()
+    weights = np.array(eff["mixture_weights"])    # (K,)
+    raw_means = np.array(eff["means"])            # (K,1)
+    scales = np.array(eff["scale_tril"])[:,0,0]    # (K,)
+    
+    # 3) activate means into [0,1]
+    mus = expit(raw_means.flatten())
+    
+    # 4) pick colors
+    base = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    tab  = ["tab:olive","tab:cyan","tab:green","tab:pink","tab:brown","black","white"]
+    needed = model.n_cats - (len(base) + len(tab))
+    extra = [] if needed < 1 else get_distinct_colors(needed)
+    colors = (base + tab + extra)[:model.n_cats]
+    
+    # 5) plot each component
+    fig, ax = plt.subplots(figsize=(8,6))
+    for i, (w, mu, sigma, c) in enumerate(zip(weights, mus, scales, colors)):
+        pdf = w * norm.pdf(x, loc=mu, scale=sigma)
+        ax.plot(x, pdf, color=c, linewidth=3, label=f"Comp. {i}")
+    
+    ax.set_xlim(*x_range)
+    ax.set_ylim(0, 1.2*ax.get_ylim()[1])
+    ax.set_xlabel("x", fontsize=22)
+    ax.set_ylabel("Weighted PDF", fontsize=22)
+    ax.legend(loc="upper right", fontsize=16, ncol=3, 
+        labelspacing=0.2,     # vertical space between entries
+        columnspacing=0.4,    # horizontal space between columns
+        handlelength=1.0      # length of the legend lines
+    )
     plt.tight_layout()
     fig.savefig(output_filename)
     plt.close(fig)
