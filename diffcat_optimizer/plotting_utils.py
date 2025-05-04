@@ -2,10 +2,12 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse, Patch
-import mplhep as hep  # assuming you use mplhep for histplot
-import hist
+from matplotlib.colors import ListedColormap, BoundaryNorm
+import mplhep as hep
 plt.style.use(hep.style.ROOT)
+import hist
 from scipy.special import expit
+from scipy.stats import multivariate_normal
 import tensorflow as tf
 import tensorflow_probability as tfp
 tfd = tfp.distributions
@@ -430,12 +432,15 @@ def visualize_bins_2d(data_dict, var_label, n_bins, path_plot):
         fig.savefig(path_plot.replace(".pdf", f"_{dims[0]}_{dims[1]}.pdf"))
         fig.clf()
 
-# in diffcat_optimizer/plotting_utils.py
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap, BoundaryNorm
-from scipy.stats import multivariate_normal
-from pathlib import Path
+def get_distinct_colors(n):
+    """
+    Return a list of n distinct RGB colors by sampling the HSV
+    colormap evenly around the hue circle.
+    """
+    # np.linspace(0,1,n,endpoint=False) gives n hues around the circle
+    hsv = plt.cm.hsv(np.linspace(0, 1, n, endpoint=False))
+    # hsv is RGBA; drop the alpha channel
+    return [tuple(rgb[:3]) for rgb in hsv]
 
 def plot_bin_boundaries_simplex(model, path_plot, resolution=1000):
     """
@@ -450,9 +455,11 @@ def plot_bin_boundaries_simplex(model, path_plot, resolution=1000):
     os.makedirs(os.path.dirname(path_plot), exist_ok=True)
 
     # 1) Build color list from current cycle + tab colors
-    base_cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
-    tab_cycle  = plt.rcParams['axes.prop_cycle'].by_key()['color'][::-1]
-    colors     = (base_cycle + tab_cycle)[:model.n_cats]
+    base = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    tab  = ["tab:olive", "tab:cyan", "tab:green", "tab:pink", "tab:brown", "black", "white"]
+    needed = model.n_cats - (len(base) + len(tab))
+    extra  = [] if needed < 1 else get_distinct_colors(needed)
+    colors = (base + tab + extra)[:model.n_cats]
 
     cmap  = ListedColormap(colors)
     bounds = np.arange(model.n_cats+1) - 0.5
@@ -577,34 +584,6 @@ def plot_yield_vs_uncertainty(
 
 
 def plot_significance_comparison(
-        equidistant_bins,
-        equidistant_Z,
-        optimized_bins,
-        optimized_Z,
-        output_filename,
-        fig_size=(8, 6)):
-    """
-    Compare overall significance for equidistant vs. GATO binnings.
-    """
-    fig, ax = plt.subplots(figsize=fig_size)
-
-    ax.plot(equidistant_bins, equidistant_Z,
-            marker="o", linestyle="-", label="Equidistant binning")
-    ax.plot(optimized_bins, optimized_Z,
-            marker="s", linestyle="--", label="GATO binning")
-
-    ax.set_xlabel("Number of bins", fontsize=22)
-    ax.set_ylabel("Overall significance", fontsize=22)
-    ax.legend(fontsize=18)
-    ax.set_xlim(0, ax.get_xlim()[1])
-    ax.set_ylim(0, ax.get_ylim()[1])
-
-    plt.tight_layout()
-    fig.savefig(output_filename)
-    plt.close(fig)
-
-
-def plot_significance_comparison(
         baseline_results: dict,
         optimized_results: dict,
         output_filename: str,
@@ -635,8 +614,8 @@ def plot_significance_comparison(
         o_bins = np.array(sorted(optimized_results[sig].keys()))
         o_Z    = np.array([optimized_results[sig][nb] for nb in o_bins])
 
-        ax.plot(b_bins, b_Z, label=f"Baseline {sig}", **base_style)
-        ax.plot(o_bins, o_Z, label=f"Optimized {sig}", **opt_style)
+        ax.plot(b_bins, b_Z, label=f"Equidistant binning {sig}", **base_style)
+        ax.plot(o_bins, o_Z, label=f"GATO binning {sig}", **opt_style)
 
     ax.set_xlabel("Number of bins", fontsize=22)
     ax.set_ylabel("Significance", fontsize=22)

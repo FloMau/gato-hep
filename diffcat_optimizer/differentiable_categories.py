@@ -4,187 +4,10 @@ from scipy.stats import norm
 from scipy.special import expit
 import tensorflow_probability as tfp
 tfd = tfp.distributions
+import math
 
 
-def asymptotic_significance(S, B, eps=1e-9):
-    """
-    Default asymptotic significance function with S/sqrt(B) approximation at very low S/B.
-    """
-    safe_B = tf.maximum(B, eps)
-    ratio = S / safe_B
-    # Full Asimov formula:
-    Z_asimov = tf.sqrt(2.0 * ((S + safe_B)*tf.math.log(1.0 + ratio) - S))
-    # S/sqrt(B) approximation for small S/B:
-    Z_approx = S / tf.sqrt(safe_B)
-    # Switch where ratio < 0.1
-    return tf.where(ratio < 0.1, Z_approx, Z_asimov)
-
-def compute_significance_from_hists(h_signal, h_bkg_list):
-    # Sum background counts bin-by-bin.
-    B_vals = sum([h_bkg.values() for h_bkg in h_bkg_list])
-    S_vals = h_signal.values()
-    S_tensor = tf.constant(S_vals, dtype=tf.float32)
-    B_tensor = tf.constant(B_vals, dtype=tf.float32)
-    Z_bins = asymptotic_significance(S_tensor, B_tensor)
-    Z_overall = np.sqrt(np.sum(Z_bins.numpy()**2))
-    return Z_overall
-
-def safe_sigmoid(z, steepness):
-    z_clipped = tf.clip_by_value(-steepness * z, -75.0, 75.0)
-    return 1.0 / (1.0 + tf.exp(z_clipped))
-
-def soft_bin_weights(x, raw_boundaries, steepness=50.0):
-    """
-    Given a 1D array x and 'n_cats -1' raw boundaries (trainable in [-∞, +∞]),
-    apply sigmoid to each boundary so they lie in [0,1], then do piecewise
-    membership weighting for each category. 
-    Returns a list of length n_cats, each entry is a TF tensor of membership weights in [0..1].
-    """
-    if raw_boundaries.shape[0] == 0:
-        # means only 1 category => everything in that category
-        return [tf.ones_like(x, dtype=tf.float32)]
-
-    boundaries = calculate_boundaries(raw_boundaries)
-
-    n_cats = len(boundaries) + 1
-    w_list = []
-    for i in range(n_cats):
-        if i == 0:
-            w0 = 1.0 - safe_sigmoid(x - boundaries[0], steepness)
-            w_list.append(w0)
-        elif i == (n_cats - 1):
-            wN = safe_sigmoid(x - boundaries[-1], steepness)
-            w_list.append(wN)
-        else:
-            w_i = safe_sigmoid(x - boundaries[i - 1], steepness) - safe_sigmoid(x - boundaries[i], steepness)
-            w_list.append(w_i)
-    return w_list
-
-def calculate_boundaries(raw_boundaries):
-    """
-    Transforms raw boundaries (trainable) into an ordered set in (0,1)
-    using a softmax transformation followed by a cumulative sum.
-
-    The softmax ensures the increments are positive and sum to one,
-    and the cumulative sum produces strictly increasing boundaries in [0,1].
-    """
-    increments = tf.nn.softmax(raw_boundaries)
-
-    boundaries = tf.cumsum(increments)
-
-    return boundaries[:-1] # ignore last value which is always 1.0
-
-def low_bkg_penalty(bkg_yields, threshold=10.0, steepness=10):
-    """
-    bkg_yields: tf.Tensor of shape [ncat], the background yields in each category 
-                  (over the entire mass range).
-    We define penalty_j = alpha * sigmoid( steepness * (threshold - bkg_yields[j]) ).
-    Then we sum over all categories.
-    """
-    # penalty per category
-    penalty_vals = (
-        tf.nn.relu(threshold - bkg_yields)
-    )**2
-    # sum over categories
-    total_penalty = tf.reduce_sum(penalty_vals)
-
-    return total_penalty
-
-def high_bkg_uncertainty_penalty(bkg_sumsq, bkg_yields, rel_threshold=0.2):
-    """
-    Penalize bins whose *relative* MC uncertainty exceeds rel_threshold.
-    
-    bkg_sumsq:   tf.Tensor [ncat], sum of w_i^2 in each bin
-    bkg_yields:  tf.Tensor [ncat], sum of w_i in each bin
-    rel_threshold: float, e.g. 0.2 for 20% relative error
-    
-    penalty_j = max(σ_j / B_j - rel_threshold, 0)^2
-    total_penalty = sum_j penalty_j
-    """
-    # avoid division by zero
-    safe_B = tf.maximum(bkg_yields, 1e-8)
-    # σ_j = sqrt(sum_i w_i^2)
-    sigma = tf.sqrt(tf.maximum(bkg_sumsq, 0.0))
-    rel_unc = sigma / safe_B
-    
-    # only penalize above threshold
-    over = tf.nn.relu(rel_unc - rel_threshold)
-    penalty_per_bin = over**2
-    
-    return tf.reduce_sum(penalty_per_bin)
-
-
-class DifferentiableCutModel(tf.Module):
-    """
-    A generic model that:
-      - Has one or more variables to cut on,
-      - Each variable has (n_bins - 1) trainable boundaries,
-      - Splits events by "soft membership" in each bin,
-      - Accumulates yields for each process in each bin,
-      - Then computes a figure of merit (like significance).
-
-    Users can override or extend:
-      - how yields are computed,
-      - how significance is combined across categories,
-      - how multiple signals or backgrounds are handled, etc.
-    """
-
-    def __init__(
-        self,
-        variables_config,
-        significance_func=asymptotic_significance,
-        name="DifferentiableCutModel",
-        **kwargs
-    ):
-        """
-        variables_config: list of dicts. Each dict must have:
-          - "name": str, the name of the column in the data
-          - "n_cats": int, number of categories for this variable
-          - optionally "steepness": float for the soft cut transitions (defaults to 50)
-
-        significance_func: function S, B -> significance
-        """
-        super().__init__(name=name)
-        self.variables_config = variables_config
-        self.significance_func = significance_func
-
-        # Create a trainable tf.Variable for each variable's boundaries.
-        self.raw_boundaries_list = []
-        for var_cfg in variables_config:
-            n_cats = var_cfg["n_cats"]
-            shape = (n_cats,) if n_cats > 1 else (0,) # in current implementation, the last value is 1, i.e., will be ignored
-
-            init_tensor = tf.random.normal(shape=shape, stddev=0.3)
-            raw_var = tf.Variable(init_tensor, trainable=True, name=f"raw_bndry_{var_cfg['name']}")
-            self.raw_boundaries_list.append(raw_var)
-
-    def call(self, data_dict):
-        """
-        For each process in data_dict, we retrieve the relevant columns
-        and apply the soft cut membership for each variable in self.variables_config.
-
-        Then we combine membership from all variables. 
-        (For simpler usage, we might do "product" of memberships or "logical" approach.)
-
-        Returns a figure of merit (scalar) that we want to maximize.
-        """
-        raise NotImplementedError(
-            "Base class: user must override the `call` method to define how yields are computed, to match the analysis specific needs! Examples are in /examples."
-        )
-
-    def get_effective_boundaries(self):
-        """Return a dict { var_name: sorted list of boundaries in [0,1]. }"""
-        out = {}
-        for var_cfg, raw_var in zip(self.variables_config, self.raw_boundaries_list):
-            if raw_var.shape[0] == 0:
-                out[var_cfg["name"]] = []
-            else:
-                # out[var_cfg["name"]] = tf.sort(tf.sigmoid(raw_var)).numpy().tolist()
-                out[var_cfg["name"]] = calculate_boundaries(raw_var)
-        return out
-
-
-class gato_gmm_model(DifferentiableCutModel):
+class gato_gmm_model(tf.Module):
     """
     A differentiable category model based on a Gaussian mixture.
 
@@ -198,51 +21,71 @@ class gato_gmm_model(DifferentiableCutModel):
     Gaussian at the event's feature vector and adding the log mixture weight.
     A temperatured softmax is then applied.
 
-    The call() method loops over processes in data_dict (a dict of pandas DataFrames
+    The call() method loops over processes in data_tensor (a dict of tf tensors
     with columns "NN_output" (an array-like of shape [dim]) and "weight"), computes 
     soft memberships, accumulates yields, and returns the negative overall significance
     as loss (plus background yields).
     """
+
     def __init__(self, n_cats, dim, temperature=1.0, name="gato_gmm_model"):
-        # Here, we don't use the 1D boundaries. We use our own parameters.
-        super().__init__(variables_config=[{"name": "NN_output", "n_cats": n_cats}], name=name)
-        self.n_cats = n_cats
-        self.dim = dim
+        super().__init__(
+            name=name
+        )
+        self.n_cats      = n_cats
+        self.dim         = dim
         self.temperature = temperature
 
-        # Mixture logits (shape: [n_cats])
-        self.mixture_logits = tf.Variable(tf.random.normal([n_cats], stddev=0.1), trainable=True, name="mixture_logits")
-
-        # Means (shape: [n_cats, dim])
-        self.means = tf.Variable(tf.random.normal([n_cats, dim], mean=0., stddev=2), trainable=True, name="means")
-
-        # Unconstrained lower triangular matrices (shape: [n_cats, dim, dim])
-        initial_L = np.array(
-            [1/(2*self.n_cats ** (1/self.dim)) * np.eye(dim) for _ in range(n_cats)],
-            dtype=np.float32
+        # -- mixture logits and means as before --
+        self.mixture_logits = tf.Variable(
+            tf.random.normal([n_cats], stddev=0.1),
+            trainable=True, name="mixture_logits"
         )
+        self.means = tf.Variable(
+            tf.random.normal([n_cats, dim], stddev=2.0),
+            trainable=True, name="means"
+        )
+
+        # --------------------------------------------------------------------
+        # Intrinsic manifold dimension (softmax on dim coordinates -> simplex of dim-1)
+        m = max(dim - 1, 1)
+
+        # Volume of the (m-simplex) { x_i>=0, sum x_i=1 } under the induced Euclid metric: V_simplex = sqrt(dim) / ( (dim-1)! )
+        V_simp = math.sqrt(dim) / math.factorial(dim - 1)
+
+        # Volume of the unit m-ball: V_ball = π^(m/2) / Γ(m/2 + 1)
+        V_ball = math.pi ** (m / 2) / math.gamma(m / 2 + 1)
+
+        # Choose sigma_base so that K · (V_ball · sigma^m) = V_simp
+        sigma_base = (V_simp / (n_cats * V_ball)) ** (1.0 / m)
+        self._sigma_base = tf.constant(sigma_base, dtype=tf.float32)
+
+        # Initialize unconstrained_L = zeros (raw_diag=0, offdiag=0)
+        init = np.zeros((n_cats, dim, dim), dtype=np.float32)
         self.unconstrained_L = tf.Variable(
-            tf.random.normal([n_cats, dim, dim], mean=0.0, stddev=1/(10*self.n_cats ** (1/self.dim))) + initial_L,
-            trainable=True,
-            name="unconstrained_L"
+            init, trainable=True, name="unconstrained_L"
         )
 
     def get_scale_tril(self):
         """
-        Returns the Cholesky factors (lower-triangular with positive diagonal) for each category.
+        Return a (n_cats, dim, dim) tensor of lower-triangular scale-factors L_k
+        so that Sigma_k = L_k @ L_k^T:
+
+        -> diag(L_k) = sigma_base * exp(raw_diag)
+        -> off-diag(L_k) = 0.1 * raw_offdiag
         """
-        L = tf.linalg.band_part(self.unconstrained_L, -1, 0)
-        # print("L before:", L)
-        # L = tf.nn.sigmoid(L) # constrain the covariances of the Gaussians
-        # print("L after:", L)
-        diag = tf.linalg.diag_part(L)
-        # print("Diag", diag)
-        # diag_positive = tf.nn.relu(diag)
-        # diag_positive = 1/np.sqrt(self.n_cats) * tf.nn.softplus(diag)
-        diag_positive = 1/(2*self.n_cats ** (1/self.dim)) * tf.nn.softplus(diag - 1)
-        # print("Diag pos", diag_positive)
-        # print("return:", tf.linalg.set_diag(L, diag_positive))
-        return tf.linalg.set_diag(0.1*L, diag_positive)
+        # isolate lower triangle
+        L_raw = tf.linalg.band_part(self.unconstrained_L, -1, 0)
+
+        off = L_raw - tf.linalg.diag(tf.linalg.diag_part(L_raw))
+        # damp off-diagonals
+        off = 0.1 * off
+
+        # build positive diag via exp
+        raw_diag = tf.linalg.diag_part(L_raw)           # shape = (n_cats, dim)
+        sigma    = self._sigma_base * tf.exp(raw_diag)  # same shape
+
+        # reassemble
+        return tf.linalg.set_diag(off, sigma)
 
     def call(self, data_dict):
         raise NotImplementedError(
@@ -259,55 +102,11 @@ class gato_gmm_model(DifferentiableCutModel):
             "scale_tril": self.get_scale_tril().numpy().tolist()
         }
 
-    def get_effective_boundaries_1d(self, n_steps=100000):
-        """
-        Numerically find the n_cats-1 crossing points in [0,1] where
-        the highest-scoring Gaussian component (w_i * Normal(x|mu_i,sigma_i))
-        switches from one one bin to the next.
-        """
-        # 1) grab learned params
-        params      = self.get_effective_parameters()
-        weights      = np.array(params["mixture_weights"])              # (n_cats,)
-        mu_raw = np.array(params["means"])[:,0]                   # raw means (un-sigmoided)
-        sigma  = np.array(params["scale_tril"])[:,0,0]            # diag of scale_tril
-
-        # 2) constrain to [0,1] via sigmoid
-        mu = tf.math.sigmoid(mu_raw).numpy()
-
-        # 3) sort everything by ascending mu
-        order = np.argsort(mu)
-        weights, mu, sigma = weights[order], mu[order], sigma[order]
-
-        # 4) grid and pdf evaluation
-        xgrid = np.linspace(0,1,n_steps)
-        # shape (n_cats, n_steps) → transpose to (n_steps,n_cats)
-        pdf_grid = np.vstack([
-            w_i * norm.pdf(xgrid, loc=m_i, scale=s_i)
-            for w_i,m_i,s_i in zip(weights, mu, sigma)
-        ]).T
-
-        # 5) find argmax changes
-        idx = np.argmax(pdf_grid, axis=1)       # for each x, which component wins
-        steps = np.where(idx[:-1] != idx[1:])[0]
-
-        # 6) record midpoints of those jumps
-        cuts = []
-        for s in steps:
-            cuts.append(0.5*(xgrid[s]+xgrid[s+1]))
-            if len(cuts) >= self.n_cats-1:
-                break
-
-        return sorted(cuts)
-
-
     def get_effective_boundaries_1d(self, n_steps: int = 100_000, return_mapping: bool = False):
         """
         Find the (n_cats-1) crossing points and, if requested, return an
         `order` array: `order[j]` = component index that defines bin *j*.
         """
-        import numpy as np
-        from scipy.stats import norm
-        import tensorflow as tf
 
         # --- effective (activated) parameters
         w   = tf.nn.softmax(self.mixture_logits).numpy()           # (n,)
@@ -403,3 +202,186 @@ class gato_gmm_model(DifferentiableCutModel):
             order = np.argsort(-Zbins)
 
         return B[order], rel_unc[order], order
+
+
+
+def asymptotic_significance(S, B, eps=1e-9):
+    """
+    Default asymptotic significance function with S/sqrt(B) approximation at very low S/B.
+    """
+    safe_B = tf.maximum(B, eps)
+    ratio = S / safe_B
+    # Full Asimov formula:
+    Z_asimov = tf.sqrt(2.0 * ((S + safe_B)*tf.math.log(1.0 + ratio) - S))
+    # S/sqrt(B) approximation for small S/B:
+    Z_approx = S / tf.sqrt(safe_B)
+    # Switch where ratio < 0.1
+    return tf.where(ratio < 0.1, Z_approx, Z_asimov)
+
+def compute_significance_from_hists(h_signal, h_bkg_list):
+    # Sum background counts bin-by-bin.
+    B_vals = sum([h_bkg.values() for h_bkg in h_bkg_list])
+    S_vals = h_signal.values()
+    S_tensor = tf.constant(S_vals, dtype=tf.float32)
+    B_tensor = tf.constant(B_vals, dtype=tf.float32)
+    Z_bins = asymptotic_significance(S_tensor, B_tensor)
+    Z_overall = np.sqrt(np.sum(Z_bins.numpy()**2))
+    return Z_overall
+
+def low_bkg_penalty(bkg_yields, threshold=10.0, steepness=10):
+    """
+    bkg_yields: tf.Tensor of shape [ncat], the background yields in each category 
+                  (over the entire mass range).
+    We define penalty_j = alpha * sigmoid( steepness * (threshold - bkg_yields[j]) ).
+    Then we sum over all categories.
+    """
+    # penalty per category
+    penalty_vals = (
+        tf.nn.relu(threshold - bkg_yields)
+    )**2
+    # sum over categories
+    total_penalty = tf.reduce_sum(penalty_vals)
+
+    return total_penalty
+
+def high_bkg_uncertainty_penalty(bkg_sumsq, bkg_yields, rel_threshold=0.2):
+    """
+    Penalize bins whose *relative* MC uncertainty exceeds rel_threshold.
+    
+    bkg_sumsq:   tf.Tensor [ncat], sum of w_i^2 in each bin
+    bkg_yields:  tf.Tensor [ncat], sum of w_i in each bin
+    rel_threshold: float, e.g. 0.2 for 20% relative error
+    
+    penalty_j = max(sigma_j / B_j - rel_threshold, 0)^2
+    total_penalty = sum_j penalty_j
+    """
+    # avoid division by zero
+    safe_B = tf.maximum(bkg_yields, 1e-8)
+    # sigma_j = sqrt(sum_i w_i^2)
+    sigma = tf.sqrt(tf.maximum(bkg_sumsq, 0.0))
+    rel_unc = sigma / safe_B
+    
+    # only penalize above threshold
+    over = tf.nn.relu(rel_unc - rel_threshold)
+    penalty_per_bin = over**2
+    
+    return tf.reduce_sum(penalty_per_bin)
+
+
+
+
+
+# keeping some old stuff below
+class _old_DifferentiableCutModel(tf.Module):
+    """
+    A generic model that:
+      - Has one or more variables to cut on,
+      - Each variable has (n_bins - 1) trainable boundaries,
+      - Splits events by "soft membership" in each bin,
+      - Accumulates yields for each process in each bin,
+      - Then computes a figure of merit (like significance).
+
+    Users can override or extend:
+      - how yields are computed,
+      - how significance is combined across categories,
+      - how multiple signals or backgrounds are handled, etc.
+    """
+
+    def __init__(
+        self,
+        variables_config,
+        significance_func=asymptotic_significance,
+        name="DifferentiableCutModel",
+        **kwargs
+    ):
+        """
+        variables_config: list of dicts. Each dict must have:
+          - "name": str, the name of the column in the data
+          - "n_cats": int, number of categories for this variable
+          - optionally "steepness": float for the soft cut transitions (defaults to 50)
+
+        significance_func: function S, B -> significance
+        """
+        super().__init__(name=name)
+        self.variables_config = variables_config
+        self.significance_func = significance_func
+
+        # Create a trainable tf.Variable for each variable's boundaries.
+        self.raw_boundaries_list = []
+        for var_cfg in variables_config:
+            n_cats = var_cfg["n_cats"]
+            shape = (n_cats,) if n_cats > 1 else (0,) # in current implementation, the last value is 1, i.e., will be ignored
+
+            init_tensor = tf.random.normal(shape=shape, stddev=0.3)
+            raw_var = tf.Variable(init_tensor, trainable=True, name=f"raw_bndry_{var_cfg['name']}")
+            self.raw_boundaries_list.append(raw_var)
+
+    def call(self, data_dict):
+        """
+        For each process in data_dict, we retrieve the relevant columns
+        and apply the soft cut membership for each variable in self.variables_config.
+
+        Then we combine membership from all variables. 
+        (For simpler usage, we might do "product" of memberships or "logical" approach.)
+
+        Returns a figure of merit (scalar) that we want to maximize.
+        """
+        raise NotImplementedError(
+            "Base class: user must override the `call` method to define how yields are computed, to match the analysis specific needs! Examples are in /examples."
+        )
+
+    def get_effective_boundaries(self):
+        """Return a dict { var_name: sorted list of boundaries in [0,1]. }"""
+        out = {}
+        for var_cfg, raw_var in zip(self.variables_config, self.raw_boundaries_list):
+            if raw_var.shape[0] == 0:
+                out[var_cfg["name"]] = []
+            else:
+                # out[var_cfg["name"]] = tf.sort(tf.sigmoid(raw_var)).numpy().tolist()
+                out[var_cfg["name"]] = calculate_boundaries(raw_var)
+        return out
+
+def safe_sigmoid(z, steepness):
+    z_clipped = tf.clip_by_value(-steepness * z, -75.0, 75.0)
+    return 1.0 / (1.0 + tf.exp(z_clipped))
+
+def soft_bin_weights(x, raw_boundaries, steepness=50.0):
+    """
+    Given a 1D array x and 'n_cats -1' raw boundaries (trainable in [-∞, +∞]),
+    apply sigmoid to each boundary so they lie in [0,1], then do piecewise
+    membership weighting for each category. 
+    Returns a list of length n_cats, each entry is a TF tensor of membership weights in [0..1].
+    """
+    if raw_boundaries.shape[0] == 0:
+        # means only 1 category => everything in that category
+        return [tf.ones_like(x, dtype=tf.float32)]
+
+    boundaries = calculate_boundaries(raw_boundaries)
+
+    n_cats = len(boundaries) + 1
+    w_list = []
+    for i in range(n_cats):
+        if i == 0:
+            w0 = 1.0 - safe_sigmoid(x - boundaries[0], steepness)
+            w_list.append(w0)
+        elif i == (n_cats - 1):
+            wN = safe_sigmoid(x - boundaries[-1], steepness)
+            w_list.append(wN)
+        else:
+            w_i = safe_sigmoid(x - boundaries[i - 1], steepness) - safe_sigmoid(x - boundaries[i], steepness)
+            w_list.append(w_i)
+    return w_list
+
+def calculate_boundaries(raw_boundaries):
+    """
+    Transforms raw boundaries (trainable) into an ordered set in (0,1)
+    using a softmax transformation followed by a cumulative sum.
+
+    The softmax ensures the increments are positive and sum to one,
+    and the cumulative sum produces strictly increasing boundaries in [0,1].
+    """
+    increments = tf.nn.softmax(raw_boundaries)
+
+    boundaries = tf.cumsum(increments)
+
+    return boundaries[:-1] # ignore last value which is always 1.0

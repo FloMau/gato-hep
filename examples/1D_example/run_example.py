@@ -82,8 +82,8 @@ def main():
     data = generate_toy_data_1D(
         # n_signal=100000,
         # n_bkg1=200000, n_bkg2=100000, n_bkg3=100000,
-        n_signal=int(100000 / 50),
-        n_bkg1=int(200000 / 50), n_bkg2=int(100000 / 50), n_bkg3=int(100000 / 50),
+        n_signal=int(100000 / 1),
+        n_bkg1=int(200000 / 1), n_bkg2=int(100000 / 1), n_bkg3=int(100000 / 1),
         xs_signal=0.5,    # 500 fb = 0.5 pb
         xs_bkg1=50, xs_bkg2=15, xs_bkg3=10,
         lumi=100,         # in /fb
@@ -106,7 +106,7 @@ def main():
 
     # For demonstration, we compare multiple binning schemes.
     equidistant_binning_options = [2, 5, 10, 20]
-    gato_binning_options = [10]
+    gato_binning_options = [3, 20]
     equidistant_significances = {}
     optimized_significances = {}
 
@@ -196,9 +196,9 @@ def main():
         penalty_unc_history = []
         boundary_history = []
 
-        epochs = 10
+        epochs = 300
         lam_yield = 0.0
-        lam_unc = 10000
+        lam_unc = 0.0
 
 
         for epoch in range(epochs):
@@ -267,7 +267,6 @@ def main():
             y_label="Negative significance",
             x_label="Epoch",
             boundaries=False,
-            title=f"Loss history (nbins={nbins})"
         )
         regularisation_plot_name = path_plots + f"history_penalty_yield{nbins}bins.pdf"
         plot_history(
@@ -276,7 +275,6 @@ def main():
             y_label="Low bkg. penalty",
             x_label="Epoch",
             boundaries=False,
-            title=f"Regularisation history (nbins={nbins})"
         )
         regularisation_plot_name = path_plots + f"history_penalty_unc_{nbins}bins.pdf"
         plot_history(
@@ -285,7 +283,6 @@ def main():
             y_label="High bkg. unc. penalty",
             x_label="Epoch",
             boundaries=False,
-            title=f"Regularisation history (nbins={nbins})"
         )
 
         # Plot the boundary evolution
@@ -296,7 +293,6 @@ def main():
             y_label="Boundary position",
             x_label="Epoch",
             boundaries=True,
-            title=f"Boundary evolution (nbins={nbins})"
         )
 
         B_sorted, rel_unc_sorted, _ = model.compute_hard_bkg_stats(tensor_data)
@@ -307,10 +303,8 @@ def main():
         )
 
     plot_significance_comparison(
-        equidistant_binning_options,
-        [equidistant_significances[nb] for nb in equidistant_binning_options],
-        gato_binning_options,
-        [optimized_significances[nb]  for nb in gato_binning_options],
+        {"": {nb: equidistant_significances[nb] for nb in equidistant_binning_options}},
+        {"": {nb: optimized_significances[nb] for nb in gato_binning_options}},
         output_filename=path_plots + "significanceComparison.pdf",
     )
 

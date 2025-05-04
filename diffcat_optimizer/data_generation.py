@@ -106,8 +106,8 @@ def generate_toy_data_1D(
 # Background consists of 5 individual Gaussian processes
 # ----------------------------------------------------------------------------
 def generate_toy_data_3class_3D(
-    n_signal1=int(100000/50), n_signal2=int(100000/50),
-    n_bkg1=int(100000/50), n_bkg2=int(80000/50), n_bkg3=int(50000/50), n_bkg4=int(20000/50), n_bkg5=int(10000/50),
+    n_signal1=int(100000), n_signal2=int(100000),
+    n_bkg1=int(100000), n_bkg2=int(80000), n_bkg3=int(50000), n_bkg4=int(20000), n_bkg5=int(10000),
     xs_signal1=0.5, xs_signal2=0.1,
     xs_bkg1=100, xs_bkg2=80, xs_bkg3=50, xs_bkg4=20, xs_bkg5=10,
     lumi=100.0, noise_scale=0.2, seed=None

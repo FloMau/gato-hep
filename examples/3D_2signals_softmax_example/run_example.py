@@ -1,8 +1,6 @@
 import os
 import sys
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
 import tensorflow as tf
 import tensorflow_probability as tfp
 tfd = tfp.distributions
@@ -11,7 +9,7 @@ repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 from diffcat_optimizer.differentiable_categories import asymptotic_significance, gato_gmm_model, low_bkg_penalty, high_bkg_uncertainty_penalty, compute_significance_from_hists
-from diffcat_optimizer.plotting_utils import plot_stacked_histograms, plot_history, plot_learned_gaussians, assign_bins_and_order, fill_histogram_from_assignments, visualize_bins_2d, plot_bin_boundaries_simplex, plot_yield_vs_uncertainty, plot_significance_comparison
+from diffcat_optimizer.plotting_utils import plot_stacked_histograms, plot_history, plot_learned_gaussians, assign_bins_and_order, fill_histogram_from_assignments, plot_bin_boundaries_simplex, plot_yield_vs_uncertainty, plot_significance_comparison
 from diffcat_optimizer.utils import df_dict_to_tensors, create_hist
 from diffcat_optimizer.data_generation import generate_toy_data_3class_3D
 
@@ -73,7 +71,11 @@ def main():
     path_plots = './examples/3D_2signals_softmax_example/Plots/'
     os.makedirs(path_plots, exist_ok=True)
     # Generate data & convert
-    data = generate_toy_data_3class_3D(seed=42, noise_scale=0.5)
+    data = generate_toy_data_3class_3D(
+        seed=42,
+        noise_scale=0.5,
+        n_signal1=int(100000/1), n_signal2=int(100000/1), n_bkg1=int(100000/1), n_bkg2=int(80000/1), n_bkg3=int(50000/1), n_bkg4=int(20000/1), n_bkg5=int(10000/1)
+    )
     tensor_data = convert_data_to_tensors(data)
 
     # Baseline significance with simple binning
@@ -98,7 +100,6 @@ def main():
             )
 
     for nbins in [2, 5, 10, 20]:
-        baseline_configs = []
         # Signal1 channel
         h_sig1 = None; bkg_h1 = []; bkg_labels1 = []
         for proc, df in data.items():
@@ -151,11 +152,12 @@ def main():
     path_gato_plots_bins_2d = path_gato_plots + "2D_bin_visualizations/"
     os.makedirs(path_gato_plots_bins_2d, exist_ok=True)
 
+    epochs = 300
     lam_yield = 0
     lam_unc = 0
 
     optimized_results = {'signal1':{}, 'signal2':{}}
-    for n_cats in [10]:
+    for n_cats in [3, 5, 10]:
         @tf.function
         def train_step(model, tensor_data, optimizer, lam_yield=0.0, lam_unc=0.0):
             with tf.GradientTape() as tape:
@@ -171,7 +173,6 @@ def main():
 
         model = gato_3D(n_cats=n_cats, dim=3, temperature=0.1)
         optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
-        epochs = 300
 
         loss_history, penalty_yield_history, penalty_unc_history = [], [], []
 
@@ -273,17 +274,13 @@ def main():
                 inv_mapping=inv_map
             )
 
-        path_plots_bins_2d = os.path.join(path_plots, )
-
         plot_bin_boundaries_simplex(
             model,
-            path_plot=os.path.join(path_gato_plots_bins_2d, f"{n_cats}_bins_new.pdf"),
+            path_plot=os.path.join(path_gato_plots_bins_2d, f"{n_cats}_bins.pdf"),
         )
-
 
         # get hard‑assignment stats (works for multi‑D)
         B_sorted, rel_unc_sorted, _ = model.compute_hard_bkg_stats(tensor_data)
-
         plot_yield_vs_uncertainty(
             B_sorted,
             rel_unc_sorted,
@@ -293,7 +290,9 @@ def main():
         )
 
     plot_significance_comparison(
-        baseline_results=baseline_results,
+        baseline_results={
+            key: {2*n+1: baseline_results[key][n] for n in baseline_results[key].keys()} for key in baseline_results.keys()
+        },
         optimized_results=optimized_results,
         output_filename=os.path.join(path_gato_plots, "significance_comparison.pdf"),
     )
