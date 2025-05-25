@@ -1,7 +1,6 @@
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
 import sys, os
+import argparse
 import tensorflow as tf
 import hist
 import tensorflow_probability as tfp
@@ -14,7 +13,7 @@ if repo_root not in sys.path:
 
 from diffcat_optimizer.plotting_utils import plot_stacked_histograms, plot_history, plot_yield_vs_uncertainty, plot_significance_comparison, plot_gmm_1d
 from diffcat_optimizer.differentiable_categories import asymptotic_significance, gato_gmm_model, low_bkg_penalty, compute_significance_from_hists, high_bkg_uncertainty_penalty
-from diffcat_optimizer.utils import df_dict_to_tensors, create_hist
+from diffcat_optimizer.utils import df_dict_to_tensors, create_hist, align_boundary_tracks
 from diffcat_optimizer.data_generation import generate_toy_data_1D
 
 
@@ -40,7 +39,7 @@ class gato_1D(gato_gmm_model):
         B_sumw2 = tf.zeros([self.n_cats], dtype=tf.float32)
 
         for proc, t in data_dict.items():
-            # x: [N] → [N,1] for the GMM
+            # x: [N] -> [N,1] for the GMM
             x = tf.expand_dims(t["NN_output"], 1)
             w = t["weight"]
             w2 = t["weight"]**2
@@ -74,18 +73,68 @@ class gato_1D(gato_gmm_model):
 
         return -Z_tot, B, B_sumw2
 
-# ------------------------------------------------------------------------------
-# Main: Generate data, run fixed binning and optimization, then compare.
-# ------------------------------------------------------------------------------
+
+# main: Generate data, run fixed binning and optimization, then compare.
 def main():
+
+    parser = argparse.ArgumentParser(description="1-D GATO optimisation on toy data")
+    parser.add_argument("--epochs",
+                        type=int,
+                        default=250,
+                        help="number of training epochs (default: 250)")
+
+    parser.add_argument("--gato-bins",
+                        type=int,
+                        nargs="+",
+                        default=[3, 5, 10],
+                        metavar="N",
+                        help="List of target bin counts for the GATO run (default: 3,5,10)")
+
+    parser.add_argument("--lam-yield",
+                        type=float,
+                        default=0.0,
+                        help=r"lambda for the low-background-yield penalty (default: 0)")
+
+    parser.add_argument("--lam-unc",
+                        type=float,
+                        default=0.0,
+                        help=r"lambda for the high-uncertainty penalty (default: 0)")
+
+    parser.add_argument("--thr-yield",
+                        type=float,
+                        default=5.0,
+                        help="Threshold (events) below which the low-yield penalty turns on (default: 10)")
+
+    parser.add_argument("--thr-unc",
+                        type=float,
+                        default=0.20,
+                        help="Relative uncertainty above which the uncertainty penalty turns on (default: 0.20)")
+
+    parser.add_argument("--n-bkg",
+                        type=int,
+                        default=300000,
+                        help="Total number of background events to generate.")
+
+    parser.add_argument("--out",
+                        type=str,
+                        default="Plots",
+                        help="Suffix for the output directory. Default: \"Plots\"")
+
+    args = parser.parse_args()
+
+    gato_binning_options = args.gato_bins
+    epochs = args.epochs
+    lam_yield = args.lam_yield
+    lam_unc = args.lam_unc
+    yield_thr = args.thr_yield
+    unc_thr = args.thr_unc
+    n_bkg = args.n_bkg
+
     # 1. Generate toy data
     data = generate_toy_data_1D(
-        # n_signal=100000,
-        # n_bkg1=200000, n_bkg2=100000, n_bkg3=100000,
-        n_signal=int(100000 / 1),
-        n_bkg1=int(200000 / 1), n_bkg2=int(100000 / 1), n_bkg3=int(100000 / 1),
-        xs_signal=0.5,    # 500 fb = 0.5 pb
-        xs_bkg1=50, xs_bkg2=15, xs_bkg3=10,
+        n_signal=100000,
+        n_bkg=n_bkg,
+        xs_signal=0.5, xs_bkg1=50, xs_bkg2=15, xs_bkg3=10, # in pb
         lumi=100,         # in /fb
         seed=42
     )
@@ -106,11 +155,10 @@ def main():
 
     # For demonstration, we compare multiple binning schemes.
     equidistant_binning_options = [2, 5, 10, 20]
-    gato_binning_options = [3, 10]
     equidistant_significances = {}
     optimized_significances = {}
 
-    path_plots = "examples/1D_example/Plots/"
+    path_plots = f"examples/1D_example/{args.out}/"
     os.makedirs(path_plots, exist_ok=True)
     fixed_plot_filename = path_plots + f"toy_data.pdf"
     plot_stacked_histograms(
@@ -168,18 +216,18 @@ def main():
         )
         print(f"Fixed binning ({nbins} bins) plot saved as {fixed_plot_filename}")
 
-    # GATO
+    # GATO part
     tensor_data = df_dict_to_tensors(data)
     for nbins in gato_binning_options:
 
         @tf.function
-        def train_step(model, tensor_data, optimizer, lam_yield=0.0, lam_unc=0.0):
+        def train_step(model, tensor_data, optimizer, lam_yield=0.0, lam_unc=0.0, threshold_yield=5, rel_threshold_unc=0.2):
             with tf.GradientTape() as tape:
                 # assume your call() now returns (loss, B, B_sumsq)
                 loss, B, B_sumw2 = model.call(tensor_data)
 
-                penalty_yield  = low_bkg_penalty(B, threshold=10.0, steepness=10.0)
-                penalty_unc  = high_bkg_uncertainty_penalty(B_sumw2, B, rel_threshold=0.2)
+                penalty_yield  = low_bkg_penalty(B, threshold=threshold_yield)
+                penalty_unc  = high_bkg_uncertainty_penalty(B_sumw2, B, rel_threshold=rel_threshold_unc)
 
                 # you can give them different weights
                 total_loss = loss + lam_yield*penalty_yield + lam_unc*penalty_unc
@@ -188,35 +236,32 @@ def main():
             return total_loss, loss, penalty_yield, penalty_unc
 
         # --- Optimization: create a model instance with n_cats = nbins ---
-        model = gato_1D(n_cats=nbins, temperature=0.1)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.01, beta_1=0.9) # if lam_yield==0 else 0.5)
+        model = gato_1D(n_cats=nbins, temperature=1)
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.02, beta_1=0.9) # if lam_yield==0 else 0.5)
 
         loss_history = []
         penalty_yield_history = []
         penalty_unc_history = []
         boundary_history = []
-
-        epochs = 300
-        lam_yield = 0.0
-        lam_unc = 0.0
-
+        boundary_history_raw = []
 
         for epoch in range(epochs):
 
-            total_loss, loss, penalty_yield, penalty_unc = train_step(model, tensor_data, optimizer, lam_yield=lam_yield, lam_unc=lam_unc)
+            total_loss, loss, penalty_yield, penalty_unc = train_step(model, tensor_data, optimizer, lam_yield=lam_yield, lam_unc=lam_unc, threshold_yield=yield_thr, rel_threshold_unc=unc_thr)
 
             # Save the history
             loss_history.append(loss.numpy())
             penalty_yield_history.append(penalty_yield.numpy())
             penalty_unc_history.append(penalty_unc.numpy())
             # Save the current boundaries in [0,1]
-            boundaries_ = model.get_effective_boundaries_1d()
-            boundary_history.append(boundaries_)
+            # cuts, order = model.get_effective_boundaries_1d(return_mapping=True)
+            # boundary_history.append((cuts, order))
+            raw_cuts = model.get_effective_boundaries_1d()     # list(float)
+            boundary_history_raw.append(raw_cuts)                # keep raw
 
             if epoch % 10 == 0 or epoch == epochs - 1:
                 print(f"[n_bins={nbins}] Epoch {epoch}: total_loss = {total_loss.numpy():.3f}, base_loss={loss.numpy():.3f}")
                 print("Effective boundaries:", model.get_effective_boundaries_1d())
-
 
         # Rebuild optimized histograms using effective boundaries
         eff_boundaries = model.get_effective_boundaries_1d()
@@ -285,11 +330,11 @@ def main():
             boundaries=False,
         )
 
-        # Plot the boundary evolution
-        bndry_plot_name = path_plots + f"history_boundaries_{nbins}bins.pdf"
+        boundary_history = align_boundary_tracks(boundary_history_raw, dist_tol=0.05)   # ndarray (epochs, n_tracks)
+        boundary_plot_name = path_plots + f"history_boundaries_{nbins}bins.pdf"
         plot_history(
             history_data=boundary_history,
-            output_filename=bndry_plot_name,
+            output_filename=boundary_plot_name,
             y_label="Boundary position",
             x_label="Epoch",
             boundaries=True,
@@ -300,6 +345,12 @@ def main():
             B_sorted,
             rel_unc_sorted,
             output_filename=path_plots + f"yield_vs_uncertainty_{nbins}bins_sorted.pdf",
+        )
+        plot_yield_vs_uncertainty(
+            B_sorted,
+            rel_unc_sorted,
+            log=True,
+            output_filename=path_plots + f"yield_vs_uncertainty_{nbins}bins_sorted_log.pdf",
         )
         # plot the learned GMM in 1D
         plot_gmm_1d(

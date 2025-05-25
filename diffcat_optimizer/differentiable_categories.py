@@ -102,41 +102,100 @@ class gato_gmm_model(tf.Module):
             "scale_tril": self.get_scale_tril().numpy().tolist()
         }
 
-    def get_effective_boundaries_1d(self, n_steps: int = 100_000, return_mapping: bool = False):
+    def get_effective_boundaries_1d(self,
+            n_steps: int = 100_000,
+            return_mapping: bool = False):
         """
-        Find the (n_cats-1) crossing points and, if requested, return an
-        `order` array: `order[j]` = component index that defines bin *j*.
+        Numerically find the (n_cats-1) crossing points in [0,1] where the most likely Gaussian component switches, 
+        and compute the ordering of components by where they dominate.
+
+        If return_mapping=True, also returns `order` such that order[j] = original component index that occupies bin j.
         """
+        # 1) fetch & activate parameters
+        weight   = tf.nn.softmax(self.mixture_logits).numpy()      # (n_cats,)
+        mu_raw  = np.array(self.means)[:, 0]                      # raw
+        mu      = tf.math.sigmoid(mu_raw).numpy()                # in [0,1]
+        sig     = self.get_scale_tril().numpy()[:,0,0]           # (n_cats,)
 
-        # --- effective (activated) parameters
-        w   = tf.nn.softmax(self.mixture_logits).numpy()           # (n,)
-        mu  = tf.math.sigmoid(self.means[:, 0]).numpy()            # (n,)
-        sig = self.get_scale_tril().numpy()[:, 0, 0]               # (n,)
+        # 2) build grid & evaluate weighted pdfs
+        xgrid = np.linspace(0.0, 1.0, n_steps)
+        pdfs  = np.vstack([
+            w * norm.pdf(xgrid, loc=m, scale=s)
+            for w,m,s in zip(weight, mu, sig)
+        ]).T  # shape = (n_steps, n_cats)
 
-        # --- sort by mu but keep mapping
-        order = np.argsort(mu)          # component → ascending‑µ rank
-        w, mu, sig = w[order], mu[order], sig[order]
+        # 3) who wins where?
+        winners = np.argmax(pdfs, axis=1)    # for each x_i
 
-        # --- dense grid
-        x = np.linspace(0.0, 1.0, n_steps)
-        pdf = np.vstack([w_i * norm.pdf(x, loc=mu_i, scale=s_i)
-                        for w_i, mu_i, s_i in zip(w, mu, sig)]).T
-        winners = np.argmax(pdf, axis=1)
-        jumps   = np.where(winners[:-1] != winners[1:])[0]
+        # 4) compute avg x-position for each component
+        avg_x = np.full(self.n_cats, 1, dtype=float)
+        for k in range(self.n_cats):
+            mask = (winners == k)
+            if np.any(mask):
+                avg_x[k] = xgrid[mask].mean()
 
-        cuts = [0.5*(x[j]+x[j+1]) for j in jumps[: self.n_cats-1]]
+        # 5) order components by avg_x
+        order = np.argsort(avg_x)   # gives original -> sorted mapping
+
+        # 6) now re-index winners into this sorted order (so that “bin 0” is the leftmost, bin 1 next, etc.)
+        inv_order = np.argsort(order)  # maps old index -> new index
+        winners_sorted = inv_order[winners]
+
+        # 7) find the first n_cats-1 transitions
+        jumps = np.where(winners_sorted[:-1] != winners_sorted[1:])[0]
+        cuts  = []
+        for j in jumps:
+            cuts.append(0.5*(xgrid[j] + xgrid[j+1]))
+            if len(cuts) >= self.n_cats - 1:
+                break
+
         cuts.sort()
-
         if return_mapping:
-            return cuts, order
+            return cuts, order.tolist()
         return cuts
 
+    def get_boundaries_for_history(self, n_steps: int = 100_000):
+        """
+        Return a list of length (n_cats-1).
+        • position i  = boundary between component i and i+1
+        • value       = crossing point in [0,1]   (float)
+        • NaN         = this boundary does not exist in this epoch
+        """
+        from scipy.stats import norm
+        import numpy as np
+
+        # activated parameters -------------------------------------------------
+        w   = tf.nn.softmax(self.mixture_logits).numpy()           # (n_cats,)
+        mu  = tf.math.sigmoid(self.means[:, 0]).numpy()            # (n_cats,)
+        sig = self.get_scale_tril().numpy()[:, 0, 0]               # (n_cats,)
+
+        # sort by mu to get a *stable* left-to-right ordering
+        order = np.argsort(mu)
+        w, mu, sig = w[order], mu[order], sig[order]
+
+        # dense grid + winning component at each x -----------------------------
+        x    = np.linspace(0.0, 1.0, n_steps)
+        pdf  = np.vstack([w_i * norm.pdf(x, mu_i, s_i)
+                        for w_i, mu_i, s_i in zip(w, mu, sig)]).T
+        winner = np.argmax(pdf, axis=1)                     # (n_steps,)
+
+        # where does the winner change?  → boundaries
+        jumps = np.where(winner[:-1] != winner[1:])[0]
+        cuts  = 0.5 * (x[jumps] + x[jumps + 1])            # (<= n_cats-1,)
+
+        # put them into fixed slots (NaN where missing)
+        slots = np.full(self.n_cats - 1, np.nan, dtype=float)
+        for idx, cut in zip(winner[jumps], cuts):
+            # idx  = the left component of the pair (after sorting by µ)
+            if idx < self.n_cats - 1:
+                slots[idx] = cut
+        return slots.tolist()          # length = n_cats-1
 
     def compute_hard_bkg_stats(self, data_dict, low=0.0, high=1.0, eps=1e-8):
         """
         Hard-assign each background event to its most-likely Gaussian component,
         then compute per-bin background yield B_j and relative uncertainty sigma_j/B_j,
-        and return them sorted by bin position in 1D or signif  icance in multi-D.
+        and return them sorted by bin position in 1D or significance in multi-D.
 
         Returns:
           B_sorted       np.array (n_cats,)
@@ -227,12 +286,10 @@ def compute_significance_from_hists(h_signal, h_bkg_list):
     Z_overall = np.sqrt(np.sum(Z_bins.numpy()**2))
     return Z_overall
 
-def low_bkg_penalty(bkg_yields, threshold=10.0, steepness=10):
+def low_bkg_penalty(bkg_yields, threshold=10.0):
     """
-    bkg_yields: tf.Tensor of shape [ncat], the background yields in each category 
-                  (over the entire mass range).
-    We define penalty_j = alpha * sigmoid( steepness * (threshold - bkg_yields[j]) ).
-    Then we sum over all categories.
+    bkg_yields: tf.Tensor of shape [ncat], the background yields in each category.
+    The penalty is summed over all categories.
     """
     # penalty per category
     penalty_vals = (

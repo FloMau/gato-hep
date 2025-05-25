@@ -150,61 +150,24 @@ def plot_stacked_histograms(
     else:
         return fig, ax_main
 
-def plot_history(
-    history_data,
-    output_filename,
-    y_label="Value",
-    x_label="Epoch",
-    boundaries=False,
-    title=None,
-    log_scale=False
-):
-    """
-    Plots a 1D array or a list-of-lists over epochs.
 
-    Parameters
-    ----------
-    history_data : list
-        - If boundaries=False, a simple list of scalar floats (e.g. loss each epoch).
-        - If boundaries=True, a list of lists. Each history_data[i] is a list
-          of boundary positions at epoch i (for a 1D categorization).
-    output_filename : str
-        Where to save the resulting PDF plot.
-    y_label : str
-        Label for the y-axis.
-    x_label : str
-        Label for the x-axis.
-    boundaries : bool
-        If False, we assume a scalar (1D) history => plot one line of y vs epoch.
-        If True, we assume each item in history_data[i] is a list of boundary positions => 
-        we draw multiple lines, one for each boundary index.
-    title : str
-        (Optional) title for the plot.
-    log_scale : bool
-        Whether to set the y-axis to log scale.
-    """
-    if not history_data:
-        print("[plot_history] No data to plot.")
-        return
+def plot_history(history_data, output_filename,
+                 y_label="Value", x_label="Epoch",
+                 boundaries=False, title=None, log_scale=False):
 
     epochs = np.arange(len(history_data))
     fig, ax = plt.subplots(figsize=(8, 6))
 
-    if not boundaries:
-        # history_data is assumed to be a list of floats
-        ax.plot(epochs, history_data, marker='o', label=y_label)
-    else:
-        # history_data is a list of lists: boundary positions at each epoch
-        max_nb = max(len(b) for b in history_data)  # how many boundaries in total
-        for boundary_idx in range(max_nb):
-            boundary_vals = []
-            for i in range(len(history_data)):
-                b_list = history_data[i]
-                if boundary_idx < len(b_list):
-                    boundary_vals.append(b_list[boundary_idx])
-                else:
-                    boundary_vals.append(np.nan)
-            ax.plot(epochs, boundary_vals, marker='o', label=f"Boundary {boundary_idx+1}", markersize=2 if max_nb>10 else 4)
+    if not boundaries:                        # scalar history
+        ax.plot(epochs, history_data, marker="o")
+    else:                                     # matrix  (epochs, n_tracks)
+        values  = np.asarray(history_data, dtype=float)
+        n_trk   = values.shape[1]
+        cmap    = plt.get_cmap("tab20", n_trk)
+        for t in range(n_trk):
+            ax.plot(epochs, values[:, t],
+                    marker="o", markersize=3,
+                    color=cmap(t), label=f"Boundary {t+1}")
 
     ax.set_xlabel(x_label, fontsize=22)
     ax.set_ylabel(y_label, fontsize=22)
@@ -212,15 +175,14 @@ def plot_history(
         ax.set_title(title, fontsize=22)
     ax.legend(
         ncol=2,
-        fontsize=18,           # reduce the text size
-        markerscale=0.5,      # make the legend markers smaller
-        labelspacing=0.2,     # reduce vertical space between labels
-        handlelength=1,       # shorten the line length for legend markers
-        handletextpad=0.4     # reduce space between marker and text
+        fontsize=18,
+        markerscale=0.6,
+        labelspacing=0.25,
+        handlelength=1.0,
+        handletextpad=0.4,
     )
-
     if log_scale:
-        ax.set_yscale('log')
+        ax.set_yscale("log")
 
     fig.tight_layout()
     os.makedirs(os.path.dirname(output_filename), exist_ok=True)
@@ -264,7 +226,7 @@ def assign_bins_and_order(model, data, eps=1e-6):
         log_probs = []
         for i in range(n_cats):
             dist = tfd.MultivariateNormalTriL(
-                loc=tf.nn.softmax(means[i]),  # as used in training
+                loc=tf.nn.softmax(means[i]),
                 scale_tril=scale_tril[i]
             )
             lp = dist.log_prob(x)  # shape: (n_events,)
@@ -442,7 +404,7 @@ def get_distinct_colors(n):
     # hsv is RGBA; drop the alpha channel
     return [tuple(rgb[:3]) for rgb in hsv]
 
-def plot_bin_boundaries_simplex(model, path_plot, resolution=1000):
+def plot_bin_boundaries_simplex(model, bin_order, path_plot, resolution=1000):
     """
     For each pair of score dims (i,j), slice the 3-simplex,
     assign each point to the highest-density GMM component, and
@@ -456,7 +418,7 @@ def plot_bin_boundaries_simplex(model, path_plot, resolution=1000):
 
     # 1) Build color list from current cycle + tab colors
     base = plt.rcParams['axes.prop_cycle'].by_key()['color']
-    tab  = ["tab:olive", "tab:cyan", "tab:green", "tab:pink", "tab:brown", "black", "white"]
+    tab  = ["tab:olive", "tab:cyan", "tab:green", "tab:pink", "tab:brown", "black"]
     needed = model.n_cats - (len(base) + len(tab))
     extra  = [] if needed < 1 else get_distinct_colors(needed)
     colors = (base + tab + extra)[:model.n_cats]
@@ -466,17 +428,17 @@ def plot_bin_boundaries_simplex(model, path_plot, resolution=1000):
     norm   = BoundaryNorm(bounds, model.n_cats)
 
     # 2) Extract GMM params
-    logits  = model.mixture_logits.numpy()
+    logits  = model.mixture_logits.numpy()[bin_order]
     weights = np.exp(logits - logits.max())
     weights /= weights.sum()
 
-    raw_means = model.means.numpy()
+    raw_means = model.means.numpy()[bin_order]
     if model.dim == 1:
         mus = expit(raw_means.flatten())[:,None]
     else:
         mus = tf.nn.softmax(raw_means, axis=1).numpy()
 
-    scales = model.get_scale_tril().numpy()
+    scales = model.get_scale_tril().numpy()[bin_order]
     covs   = np.einsum('kij,kpj->kip', scales, scales)
 
     # 3) Loop over 2D faces
@@ -514,18 +476,18 @@ def plot_bin_boundaries_simplex(model, path_plot, resolution=1000):
             yi = Y[assign==b]
             if xi.size:
                 ax.text(xi.mean(), yi.mean(), str(b),
-                        color=colors[b], fontsize=10,
+                        color=colors[b], fontsize=16,
                         fontweight='bold', ha='center', va='center')
 
         # legend
         proxies = [plt.Rectangle((0,0),1,1, color=colors[b]) for b in range(model.n_cats)]
         ax.legend(proxies, [f"Bin {b}" for b in range(model.n_cats)],
-                  ncol=2, fontsize=9, loc='upper right')
+                  ncol=2, fontsize=16, loc='upper right')
 
         ax.set_xlim(0,1)
         ax.set_ylim(0,1)
-        ax.set_xlabel(f"Discriminant node {i}")
-        ax.set_ylabel(f"Discriminant node {j}")
+        ax.set_xlabel(f"Discriminant node {i}", fontsize=18)
+        ax.set_ylabel(f"Discriminant node {j}", fontsize=18)
 
         plt.tight_layout()
         fig.savefig(path_plot.replace(".pdf", f"_dims_{i}_{j}.pdf"))
@@ -535,6 +497,7 @@ def plot_yield_vs_uncertainty(
         B_sorted,
         rel_unc_sorted,
         output_filename,
+        log=False,
         x_label="Bin index",
         y_label_left="Background yield",
         y_label_right="Rel. stat. unc.",
@@ -569,12 +532,16 @@ def plot_yield_vs_uncertainty(
     ax1.tick_params(axis="y", colors=left_style["color"])
     ax1.spines["left"].set_color(left_style["color"])
 
+    if log:
+        ax1.set_yscale("log")
+
     # relative uncertainty, shifted right
     ax2 = ax1.twinx()
     ax2.bar(bins + width / 2, rel_unc_sorted, **right_style)
     ax2.set_ylabel(y_label_right, color=right_style["color"], fontsize=fontsize)
     ax2.tick_params(axis="y", colors=right_style["color"])
     ax2.spines["right"].set_color(right_style["color"])
+
 
     ax1.set_xlabel(x_label, fontsize=fontsize)
     ax1.set_xticks(bins)
@@ -655,7 +622,7 @@ def plot_gmm_1d(model,
     
     # 4) pick colors
     base = plt.rcParams['axes.prop_cycle'].by_key()['color']
-    tab  = ["tab:olive","tab:cyan","tab:green","tab:pink","tab:brown","black","white"]
+    tab  = ["tab:olive","tab:cyan","tab:green","tab:pink","tab:brown","black"]
     needed = model.n_cats - (len(base) + len(tab))
     extra = [] if needed < 1 else get_distinct_colors(needed)
     colors = (base + tab + extra)[:model.n_cats]

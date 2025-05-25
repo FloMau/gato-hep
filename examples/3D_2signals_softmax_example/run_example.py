@@ -3,6 +3,7 @@ import sys
 import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
+import argparse
 tfd = tfp.distributions
 # Append the repo root to sys.path so that we can import our core modules.
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -67,21 +68,75 @@ class gato_3D(gato_gmm_model):
 
 # Main execution
 def main():
+    parser = argparse.ArgumentParser(description="3-D GATO optimisation on toy data")
+    parser.add_argument("--epochs",
+                        type=int,
+                        default=250,
+                        help="Number of training epochs (default: 250)")
 
-    path_plots = './examples/3D_2signals_softmax_example/Plots/'
+    parser.add_argument("--gato-bins",
+                        type=int,
+                        nargs="+",
+                        default=[3, 5, 10],
+                        metavar="N",
+                        help="List of target bin counts for the GATO run (default: 3,5,10)")
+
+    parser.add_argument("--lam-yield",
+                        type=float,
+                        default=0.0,
+                        help=r"lambda for the low-background-yield penalty (default: 0)")
+
+    parser.add_argument("--lam-unc",
+                        type=float,
+                        default=0.0,
+                        help=r"lambda for the high-uncertainty penalty (default: 0)")
+
+    parser.add_argument("--thr-yield",
+                        type=float,
+                        default=5.0,
+                        help="Threshold (events) below which the low-yield penalty turns on (default: 10)")
+
+    parser.add_argument("--thr-unc",
+                        type=float,
+                        default=0.20,
+                        help="Relative uncertainty above which the uncertainty penalty turns on (default: 0.20)")
+
+    parser.add_argument("--n-bkg",
+                        type=int,
+                        default=1_000_000,
+                        help="Total number of background events to generate.")
+
+    parser.add_argument("--out",
+                        type=str,
+                        default="Plots",
+                        help="Suffix for the output directory. Default: \"Plots\"")
+
+    args = parser.parse_args()
+
+    gato_binning_options = args.gato_bins
+    epochs = args.epochs
+    lam_yield = args.lam_yield
+    lam_unc = args.lam_unc
+    yield_thr = args.thr_yield
+    unc_thr = args.thr_unc
+    n_bkg = args.n_bkg
+
+
+    path_plots = f'./examples/3D_2signals_softmax_example/{args.out}/'
     os.makedirs(path_plots, exist_ok=True)
     # Generate data & convert
     data = generate_toy_data_3class_3D(
         seed=42,
-        noise_scale=0.5,
-        n_signal1=int(100000/1), n_signal2=int(100000/1), n_bkg1=int(100000/1), n_bkg2=int(80000/1), n_bkg3=int(50000/1), n_bkg4=int(20000/1), n_bkg5=int(10000/1)
+        noise_scale=0.3,
+        n_signal1=100000, n_signal2=100000, n_bkg=n_bkg
     )
+
     tensor_data = convert_data_to_tensors(data)
 
     # Baseline significance with simple binning
     baseline_results = {'signal1':{}, 'signal2':{}}
 
-    # first: plot without argmax reqiurement and many bins:
+    # plot to show dataset
     for dim in range(3):
         _hists = {}
         for proc, df in data.items():
@@ -99,7 +154,8 @@ def main():
                 axis_labels=(f"NN discriminant node {dim}", "Events"),
             )
 
-    for nbins in [2, 5, 10, 20]:
+    # fixed binning in each node after argmax classification for comparison
+    for nbins in [2, 5, 10]:
         # Signal1 channel
         h_sig1 = None; bkg_h1 = []; bkg_labels1 = []
         for proc, df in data.items():
@@ -126,10 +182,10 @@ def main():
         Z2 = compute_significance_from_hists(h_sig2, bkg_h2)
         baseline_results['signal2'][nbins] = Z2
 
-        # Plot baseline histograms
+        # plotting
         for sig_name, h_sig, bkgs, labels, xlab, sig_label in [
-            ('signal1', h_sig1, bkg_h1, bkg_labels1, 'NN output (signal1)', 'Signal1 x10'),
-            ('signal2', h_sig2, bkg_h2, bkg_labels2, 'NN output (signal2)', 'Signal2 x10')
+            ('signal1', h_sig1, bkg_h1, bkg_labels1, 'NN output (signal1)', 'Signal1 x100'),
+            ('signal2', h_sig2, bkg_h2, bkg_labels2, 'NN output (signal2)', 'Signal2 x500')
         ]:
             for logscale in [False, True]:
                 tag = 'log' if logscale else 'lin'
@@ -137,7 +193,7 @@ def main():
                 plot_stacked_histograms(
                     stacked_hists=bkgs,
                     process_labels=labels,
-                    signal_hists=[10*h_sig],
+                    signal_hists=[100*h_sig if sig_name=="signal1" else 500*h_sig],
                     signal_labels=[sig_label],
                     output_filename=fname,
                     axis_labels=(xlab, 'Events'),
@@ -145,67 +201,60 @@ def main():
                     log=logscale,
                 )
 
-    # Optimization via gato_3D
+    # GATO optimisation from here
     path_gato_plots = path_plots + "gato/"
     os.makedirs(path_gato_plots, exist_ok=True)
 
     path_gato_plots_bins_2d = path_gato_plots + "2D_bin_visualizations/"
     os.makedirs(path_gato_plots_bins_2d, exist_ok=True)
 
-    epochs = 300
-    lam_yield = 0
-    lam_unc = 0
-
     optimized_results = {'signal1':{}, 'signal2':{}}
-    for n_cats in [3, 5, 10]:
+    for n_cats in gato_binning_options:
+        # recompile tf function for each setup
         @tf.function
-        def train_step(model, tensor_data, optimizer, lam_yield=0.0, lam_unc=0.0):
+        def train_step(model, tensor_data, optimizer, lam_yield=0.0, lam_unc=0.0, threshold_yield=5, rel_threshold_unc=0.2):
             with tf.GradientTape() as tape:
+
                 loss, B, B_sumw2 = model.call(tensor_data)
+                penalty_yield  = low_bkg_penalty(B, threshold=threshold_yield)
+                penalty_unc  = high_bkg_uncertainty_penalty(B_sumw2, B, rel_threshold=rel_threshold_unc)
 
-                pen_yield = low_bkg_penalty(B, threshold=10.0, steepness=10.0)
-                pen_unc = high_bkg_uncertainty_penalty(B_sumw2, B, rel_threshold=0.20)
+                total_loss = loss + lam_yield * penalty_yield + lam_unc * penalty_unc
 
-                total_loss = loss + lam_yield * pen_yield + lam_unc * pen_unc
             grads = tape.gradient(total_loss, model.trainable_variables)
             optimizer.apply_gradients(zip(grads, model.trainable_variables))
-            return total_loss, loss, pen_yield, pen_unc
+            return total_loss, loss, penalty_yield, penalty_unc
 
         model = gato_3D(n_cats=n_cats, dim=3, temperature=0.1)
         optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
 
         loss_history, penalty_yield_history, penalty_unc_history = [], [], []
-
         for epoch in range(epochs):
-            total_loss, loss, pen_yield, pen_unc = train_step(model, tensor_data, optimizer, lam_yield=lam_yield, lam_unc=lam_unc)
+            total_loss, loss, pen_yield, pen_unc = train_step(model, tensor_data, optimizer, lam_yield=lam_yield, lam_unc=lam_unc, threshold_yield=yield_thr, rel_threshold_unc=unc_thr)
 
             loss_history.append(loss.numpy())
             penalty_yield_history.append(pen_yield.numpy())
             penalty_unc_history.append(pen_unc.numpy())
 
             if epoch % 10 == 0:
-                print(f'[Epoch {epoch}] base_loss={loss.numpy():.3f}')
+                print(f'[Epoch {epoch}]: significance loss = {loss.numpy():.3f}')
 
-        # Assign bins and fill histograms
+        # Assign bins from the trained model and fill histograms
         assignments, order, _, inv_map = assign_bins_and_order(model, data)
         for proc in data.keys():
             data[proc]["bin_index"] = assignments[proc]
         filled = {}
         for proc in data.keys():
-            filled[proc] = fill_histogram_from_assignments(
-                assignments[proc], data[proc]['weight'], n_cats
-            )
-        # --------- compute optimized significances ----------
-        # build explicit background list once
-        opt_bkg_hists = [filled['bkg1'], filled['bkg2'], filled['bkg3'], filled['bkg4'], filled['bkg5']]
+            filled[proc] = fill_histogram_from_assignments(assignments[proc], data[proc]['weight'], n_cats)
 
+        # compute optimized significances
+        opt_bkg_hists = [filled['bkg1'], filled['bkg2'], filled['bkg3'], filled['bkg4'], filled['bkg5']]
         # Signal1 channel: other signal + all bkg are background
         Z1_opt = compute_significance_from_hists(
             filled['signal1'],
             opt_bkg_hists + [filled['signal2']]
         )
         optimized_results['signal1'][n_cats] = Z1_opt
-
         # Signal2 channel
         Z2_opt = compute_significance_from_hists(
             filled['signal2'],
@@ -213,16 +262,15 @@ def main():
         )
         optimized_results['signal2'][n_cats] = Z2_opt
 
-
-        # --------- plot optimized histograms ----------
+        # plot optimized histograms
         opt_plot_filename = os.path.join(path_gato_plots, f"NN_output_distribution_optimized_{n_cats}bins.pdf")
 
         # linear plot
         plot_stacked_histograms(
             stacked_hists=opt_bkg_hists,
             process_labels=["Bkg. 1", "Bkg. 2", "Bkg. 3", "Bkg. 4", "Bkg. 5"],
-            signal_hists=[filled['signal1']*10, filled['signal2']*50],
-            signal_labels=[r"Signal 1 $\times 10$", r"Signal 2 $\times 50$"],
+            signal_hists=[filled['signal1']*100, filled['signal2']*500],
+            signal_labels=[r"Signal 1 $\times 100$", r"Signal 2 $\times 500$"],
             output_filename=opt_plot_filename,
             axis_labels=("Bin index", "Events"),
             normalize=False,
@@ -234,8 +282,8 @@ def main():
         plot_stacked_histograms(
             stacked_hists=opt_bkg_hists,
             process_labels=["Bkg. 1", "Bkg. 2", "Bkg. 3", "Bkg. 4", "Bkg. 5"],
-            signal_hists=[filled['signal1']*10, filled['signal2']*50],
-            signal_labels=[r"Signal 1 $\times 10$", r"Signal 2 $\times 50$"],
+            signal_hists=[filled['signal1']*100, filled['signal2']*500],
+            signal_labels=[r"Signal 1 $\times 100$", r"Signal 2 $\times 500$"],
             output_filename=opt_plot_filename.replace(".pdf", "_log.pdf"),
             axis_labels=("Bin index", "Events"),
             normalize=False,
@@ -276,17 +324,22 @@ def main():
 
         plot_bin_boundaries_simplex(
             model,
+            order,
             path_plot=os.path.join(path_gato_plots_bins_2d, f"{n_cats}_bins.pdf"),
         )
 
         # get hard‑assignment stats (works for multi‑D)
         B_sorted, rel_unc_sorted, _ = model.compute_hard_bkg_stats(tensor_data)
         plot_yield_vs_uncertainty(
-            B_sorted,
-            rel_unc_sorted,
-            output_filename=os.path.join(
-                path_gato_plots, f"yield_vs_unc_{n_cats}bins.pdf"
-            ),
+            B_sorted[order],
+            rel_unc_sorted[order],
+            output_filename=path_gato_plots + f"yield_vs_uncertainty_{nbins}bins_sorted.pdf",
+        )
+        plot_yield_vs_uncertainty(
+            B_sorted[order],
+            rel_unc_sorted[order],
+            log=True,
+            output_filename=path_gato_plots + f"yield_vs_uncertainty_{nbins}bins_sorted_log.pdf",
         )
 
     plot_significance_comparison(
