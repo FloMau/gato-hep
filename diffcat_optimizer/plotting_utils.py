@@ -548,6 +548,7 @@ def plot_yield_vs_uncertainty(
     fig.tight_layout()
     fig.savefig(output_filename)
     plt.close(fig)
+    print(f"INFO: figure {output_filename} was created.")
 
 
 def plot_significance_comparison(

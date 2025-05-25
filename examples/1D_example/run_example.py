@@ -237,7 +237,7 @@ def main():
 
         # --- Optimization: create a model instance with n_cats = nbins ---
         model = gato_1D(n_cats=nbins, temperature=1)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.02, beta_1=0.9) # if lam_yield==0 else 0.5)
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.01, beta_1=0.9) # if lam_yield==0 else 0.5)
 
         loss_history = []
         penalty_yield_history = []

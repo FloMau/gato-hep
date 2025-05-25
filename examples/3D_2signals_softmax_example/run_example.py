@@ -225,8 +225,8 @@ def main():
             optimizer.apply_gradients(zip(grads, model.trainable_variables))
             return total_loss, loss, penalty_yield, penalty_unc
 
-        model = gato_3D(n_cats=n_cats, dim=3, temperature=0.1)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
+        model = gato_3D(n_cats=n_cats, dim=3, temperature=0.5)
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.005)
 
         loss_history, penalty_yield_history, penalty_unc_history = [], [], []
         for epoch in range(epochs):
@@ -337,13 +337,13 @@ def main():
         plot_yield_vs_uncertainty(
             B_sorted[order],
             rel_unc_sorted[order],
-            output_filename=path_gato_plots + f"yield_vs_uncertainty_{nbins}bins_sorted.pdf",
+            output_filename=path_gato_plots + f"yield_vs_uncertainty_{n_cats}bins_sorted.pdf",
         )
         plot_yield_vs_uncertainty(
             B_sorted[order],
             rel_unc_sorted[order],
             log=True,
-            output_filename=path_gato_plots + f"yield_vs_uncertainty_{nbins}bins_sorted_log.pdf",
+            output_filename=path_gato_plots + f"yield_vs_uncertainty_{n_cats}bins_sorted_log.pdf",
         )
 
     plot_significance_comparison(
