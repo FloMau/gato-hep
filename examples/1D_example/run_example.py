@@ -262,7 +262,10 @@ def main():
             if epoch % 10 == 0 or epoch == epochs - 1:
                 print(f"[n_bins={nbins}] Epoch {epoch}: total_loss = {total_loss.numpy():.3f}, base_loss={loss.numpy():.3f}")
                 print("Effective boundaries:", model.get_effective_boundaries_1d())
-
+            # save the trained GATO model
+            checkpoint_dir = os.path.join(path_plots, f"checkpoints/{nbins}_bins")
+            os.makedirs(checkpoint_dir, exist_ok=True)
+            model.save(checkpoint_dir)
         # Rebuild optimized histograms using effective boundaries
         eff_boundaries = model.get_effective_boundaries_1d()
         print(f"Optimized boundaries for {nbins} bins: {eff_boundaries}")

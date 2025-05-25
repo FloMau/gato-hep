@@ -238,6 +238,10 @@ def main():
 
             if epoch % 10 == 0:
                 print(f'[Epoch {epoch}]: significance loss = {loss.numpy():.3f}')
+        # save the trained GATO model
+        checkpoint_dir = os.path.join(path_plots, f"gato/checkpoints/{nbins}_bins")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        model.save(checkpoint_dir)
 
         # Assign bins from the trained model and fill histograms
         assignments, order, _, inv_map = assign_bins_and_order(model, data)

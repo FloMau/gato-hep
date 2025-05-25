@@ -154,6 +154,27 @@ class gato_gmm_model(tf.Module):
             return cuts, order.tolist()
         return cuts
 
+    def save(self, path: str):
+        """
+        Save just the model's trainable variables to `path/ckpt-<step>`.
+        """
+        checkpoint = tf.train.Checkpoint(model=self)
+        manager = tf.train.CheckpointManager(checkpoint, directory=path, max_to_keep=3)
+        checkpoint_path = manager.save()
+        print(f"INFO: model saved to {checkpoint_path}")
+
+    def restore(self, path: str):
+        """
+        Restore the model's trainable variables from the latest checkpoint in `path`.
+        """
+        checkpoint = tf.train.Checkpoint(model=self)
+        manager = tf.train.CheckpointManager(checkpoint, directory=path, max_to_keep=3)
+        if manager.latest_checkpoint:
+            checkpoint.restore(manager.latest_checkpoint).expect_partial()
+            print(f"INFO: model restored from {manager.latest_checkpoint}")
+        else:
+            print(f"INFO: no checkpoint found in {path}, starting fresh")
+
     def get_boundaries_for_history(self, n_steps: int = 100_000):
         """
         Return a list of length (n_cats-1).
@@ -161,8 +182,6 @@ class gato_gmm_model(tf.Module):
         • value       = crossing point in [0,1]   (float)
         • NaN         = this boundary does not exist in this epoch
         """
-        from scipy.stats import norm
-        import numpy as np
 
         # activated parameters -------------------------------------------------
         w   = tf.nn.softmax(self.mixture_logits).numpy()           # (n_cats,)
@@ -324,10 +343,8 @@ def high_bkg_uncertainty_penalty(bkg_sumsq, bkg_yields, rel_threshold=0.2):
     return tf.reduce_sum(penalty_per_bin)
 
 
-
-
-
-# keeping some old stuff below
+# keeping some old class below
+# this one is based on sigmoid functions with learnable offset
 class _old_DifferentiableCutModel(tf.Module):
     """
     A generic model that:
