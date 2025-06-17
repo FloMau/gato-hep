@@ -189,7 +189,7 @@ def plot_history(history_data, output_filename,
     fig.savefig(output_filename)
     plt.close(fig)
 
-def assign_bins_and_order(model, data, eps=1e-6):
+def assign_bins_and_order(model, data, reduce=False, eps=1e-6):
     """
     Given a trained multidimensional cut model and a data dictionary,
     compute for each event the hard assignment (using argmax over joint log-probabilities),
@@ -210,6 +210,14 @@ def assign_bins_and_order(model, data, eps=1e-6):
     scale_tril = model.get_scale_tril()                 # shape: (n_cats, dim, dim)
     means = model.means                                 # shape: (n_cats, dim)
 
+    if reduce:
+        zeros = tf.zeros((tf.shape(means)[0], 1), dtype=means.dtype)
+        full_logits = tf.concat([means, zeros], axis=1)
+        probs3 = tf.nn.softmax(full_logits)
+        locs = probs3.numpy()[:, :-1]
+    else:
+        locs = tf.nn.softmax(means)
+
     # Accumulate yields per bin.
     S_yields = np.zeros(n_cats, dtype=np.float32)
     B_yields = np.zeros(n_cats, dtype=np.float32)
@@ -226,7 +234,7 @@ def assign_bins_and_order(model, data, eps=1e-6):
         log_probs = []
         for i in range(n_cats):
             dist = tfd.MultivariateNormalTriL(
-                loc=tf.nn.softmax(means[i]),
+                loc=locs[i],
                 scale_tril=scale_tril[i]
             )
             lp = dist.log_prob(x)  # shape: (n_events,)
@@ -278,7 +286,7 @@ def fill_histogram_from_assignments(assignments, weights, nbins, name="BinAssign
     h.fill(assignments, weight=weights)
     return h
 
-def plot_learned_gaussians(data, model, dim_x, dim_y, output_filename, conf_level=2.30, inv_mapping=None):
+def plot_learned_gaussians(data, model, dim_x, dim_y, output_filename, conf_level=2.30, inv_mapping=None, reduce=False):
     """
     Plot the learned Gaussian components (projected to two dimensions) and the data.
 
@@ -326,7 +334,14 @@ def plot_learned_gaussians(data, model, dim_x, dim_y, output_filename, conf_leve
     for new_bin in range(n_cats):
         orig = inv_mapping[new_bin]  # Get the original Gaussian index for this new bin.
         # Project the mean and covariance.
-        mu = tf.nn.softmax(means[orig]).numpy()[[dim_x, dim_y]]
+        if reduce:
+            mean_raw = means[orig]  # shape (2,)
+            full_logits = tf.concat([mean_raw, [0.0]], axis=0)  # shape (3,)
+            probs3 = tf.nn.softmax(full_logits)  # shape (3,)
+            mu = probs3.numpy()[:-1]    # convert to numpy and pick 2 coords
+
+        else:
+            mu = tf.nn.softmax(means[orig]).numpy()[[dim_x, dim_y]]
         cov_proj = covariances[orig][np.ix_([dim_x, dim_y], [dim_x, dim_y])]
         eigenvals, eigenvecs = np.linalg.eigh(cov_proj)
         # Here, since np.linalg.eigh returns ascending eigenvalues, take the eigenvector for the larger eigenvalue.
@@ -404,7 +419,7 @@ def get_distinct_colors(n):
     # hsv is RGBA; drop the alpha channel
     return [tuple(rgb[:3]) for rgb in hsv]
 
-def plot_bin_boundaries_simplex(model, bin_order, path_plot, resolution=1000):
+def plot_bin_boundaries_simplex(model, bin_order, path_plot, reduce=False, resolution=1000):
     """
     For each pair of score dims (i,j), slice the 3-simplex,
     assign each point to the highest-density GMM component, and
@@ -435,6 +450,14 @@ def plot_bin_boundaries_simplex(model, bin_order, path_plot, resolution=1000):
     raw_means = model.means.numpy()[bin_order]
     if model.dim == 1:
         mus = expit(raw_means.flatten())[:,None]
+    # elif sigmoid:
+    #     mus = tf.math.sigmoid(raw_means).numpy()
+    if reduce:
+        zeros = tf.zeros((tf.shape(raw_means)[0], 1), dtype=raw_means.dtype)  # (n_cats,1)
+        full_logits = tf.concat([raw_means, zeros], axis=1)  # (n_cats, 3)
+        probs = tf.nn.softmax(full_logits, axis=1).numpy()  # (n_cats,3)
+        # take first two coords as 2D location
+        mus = probs[:, :model.dim]                          # (n_cats,2)
     else:
         mus = tf.nn.softmax(raw_means, axis=1).numpy()
 
@@ -455,9 +478,13 @@ def plot_bin_boundaries_simplex(model, bin_order, path_plot, resolution=1000):
         pts[:,j] = Y[mask]
         pts[:,k] = 1.0 - pts[:,i] - pts[:,j]
 
+        if reduce:
+            pts = pts[:, :-1]
+
         # compute log density + log weight
         logps = np.zeros((pts.shape[0], model.n_cats))
         for idx in range(model.n_cats):
+            print("mean=mus[idx], cov=covs[idx]", mus[idx], covs[idx])
             rv = multivariate_normal(mean=mus[idx], cov=covs[idx], allow_singular=True)
             logps[:,idx] = np.log(weights[idx]+1e-12) + rv.logpdf(pts)
 
