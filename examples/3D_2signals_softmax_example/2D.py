@@ -281,7 +281,7 @@ def main():
             return loss
 
         model     = GATO_2D(n_cats=n_cats, temperature=0.5)
-        optimizer = tf.keras.optimizers.Adam(0.05)
+        optimizer = tf.keras.optimizers.Adam(0.02)
 
         loss_history = []
         for ep in range(args.epochs):
