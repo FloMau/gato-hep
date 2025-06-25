@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
-import tensorflow as tf
 import tensorflow_probability as tfp
-tfd = tfp.distributions
 from scipy.stats import multivariate_normal
+
+tfd = tfp.distributions
 
 
 def sample_gaussian(n_events, mean, cov, seed=None):
@@ -12,6 +12,7 @@ def sample_gaussian(n_events, mean, cov, seed=None):
     """
     rng = np.random.default_rng(seed)
     return rng.multivariate_normal(mean, cov, size=n_events)
+
 
 def generate_toy_data_1D(
     n_signal=100000, n_bkg=300000,
@@ -28,10 +29,10 @@ def generate_toy_data_1D(
 
     # 1) define means & covariances
     means = {
-        "signal": np.array([ 0.5,  0.5,  1.0]),
-        "bkg1":   np.array([ -0.5,  1.,  -1]),
-        "bkg2":   np.array([ 0.25,  -0.25,  3.0]),
-        "bkg3":   np.array([ 0.75,  0.25,  -0.5]),
+        "signal": np.array([0.5,  0.5,  1.0]),
+        "bkg1":   np.array([-0.5,  1.,  -1]),
+        "bkg2":   np.array([0.25,  -0.25,  3.0]),
+        "bkg3":   np.array([0.75,  0.25,  -0.5]),
     }
 
     covs = {
@@ -71,7 +72,7 @@ def generate_toy_data_1D(
 
     # 3) sample
     raw = {}
-    for proc in means:
+    for proc in means.items():
         X = sample_gaussian(counts[proc], means[proc], covs[proc], seed=seed)
         w = xs[proc] * lumi / counts[proc]
         raw[proc] = {"X": X, "w": w}
@@ -79,23 +80,25 @@ def generate_toy_data_1D(
     # 4) build scipy MVN pdfs
     pdfs = {proc: multivariate_normal(means[proc], covs[proc])
             for proc in means}
-    
+
     # total cross section of background
     total_bkg_xs = sum(xs[p] for p in pdfs if p != "signal")
 
-    # 5) compute optimal discriminant for each proc’s points:
+    # 5) compute optimal discriminant for each proc's points:
     dfs = {}
     for proc, info in raw.items():
         X = info["X"]
         w = info["w"]
         p_sig = pdfs["signal"].pdf(X)
         # sum of background pdfs at X
-        p_bkg = sum((xs[p] / total_bkg_xs) * pdfs[p].pdf(X) for p in pdfs if p != "signal")
+        p_bkg = sum(
+            (xs[p] / total_bkg_xs) * pdfs[p].pdf(X) for p in pdfs if p != "signal"
+        )
 
-        # noise 
-        p_sig *= np.abs((1 + np.random.normal(scale=0.3, size=p_sig.shape)))
-        p_bkg *= np.abs((1 + np.random.normal(scale=0.3, size=p_bkg.shape)))
-        # likelihood‐ratio and map to [0,1] via sigmoid‐like:
+        # noise
+        p_sig *= np.abs(1 + np.random.normal(scale=0.3, size=p_sig.shape))
+        p_bkg *= np.abs(1 + np.random.normal(scale=0.3, size=p_bkg.shape))
+        # likelihood-ratio and map to [0,1] via sigmoid-like:
         lr = p_sig / (p_bkg + 1e-12)
 
         disc = lr / (1.0 + lr)
@@ -106,6 +109,7 @@ def generate_toy_data_1D(
         })
 
     return dfs
+
 
 # 3D Toy Data Generator for 3-class classifier
 # Background consists of 5 individual Gaussian processes
@@ -216,7 +220,7 @@ def generate_toy_data_3class_3D(
         score_bkg = pb / total
 
         nn_output = np.stack([score1, score2, score_bkg], axis=1)
-        nn_output = [row for row in nn_output]
+        nn_output = list(nn_output)
 
         data[proc] = pd.DataFrame({
             "NN_output": nn_output,

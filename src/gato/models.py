@@ -1,12 +1,11 @@
-import tensorflow as tf
-import numpy as np
-from scipy.stats import norm
-from scipy.special import expit
-import tensorflow_probability as tfp
 from gato.utils import safe_sigmoid, asymptotic_significance
-
-tfd = tfp.distributions
 import math
+import numpy as np
+from scipy.special import expit
+from scipy.stats import norm
+import tensorflow as tf
+import tensorflow_probability as tfp
+tfd = tfp.distributions
 
 
 class gato_gmm_model(tf.Module):
@@ -16,7 +15,7 @@ class gato_gmm_model(tf.Module):
     The model learns, for each of n_cats:
       - mixture_logits (which give the mixing weights),
       - mean vector (of dimension 'dim'),
-      - an unconstrained lower-triangular matrix that is transformed into a 
+      - an unconstrained lower-triangular matrix that is transformed into a
         positive-definite Cholesky factor for the covariance.
 
     The per-event soft membership is computed by evaluating the log pdf of each
@@ -24,17 +23,17 @@ class gato_gmm_model(tf.Module):
     A temperatured softmax is then applied.
 
     The call() method loops over processes in data_tensor (a dict of tf tensors
-    with columns "NN_output" (an array-like of shape [dim]) and "weight"), computes 
-    soft memberships, accumulates yields, and returns the negative overall significance
-    as loss (plus background yields).
+    with columns "NN_output" (an array-like of shape [dim]) and "weight"),
+    computes soft memberships, accumulates yields, and returns the negative
+    overall significance as loss (plus background yields).
     """
 
     def __init__(self, n_cats, dim, temperature=1.0, name="gato_gmm_model"):
         super().__init__(
             name=name
         )
-        self.n_cats      = n_cats
-        self.dim         = dim
+        self.n_cats = n_cats
+        self.dim = dim
         self.temperature = temperature
 
         # -- mixture logits and means as before --
@@ -51,7 +50,8 @@ class gato_gmm_model(tf.Module):
         # Intrinsic manifold dimension (softmax on dim coordinates -> simplex of dim-1)
         m = max(dim - 1, 1)
 
-        # Volume of the (m-simplex) { x_i>=0, sum x_i=1 } under the induced Euclid metric: V_simplex = sqrt(dim) / ( (dim-1)! )
+        # Volume of the (m-simplex) { x_i>=0, sum x_i=1 } under the induced
+        #  Euclid metric: V_simplex = sqrt(dim) / ( (dim-1)!)
         V_simp = math.sqrt(dim) / math.factorial(dim - 1)
 
         # Volume of the unit m-ball: V_ball = π^(m/2) / Γ(m/2 + 1)
@@ -84,14 +84,15 @@ class gato_gmm_model(tf.Module):
 
         # build positive diag via exp
         raw_diag = tf.linalg.diag_part(L_raw)           # shape = (n_cats, dim)
-        sigma    = self._sigma_base * tf.exp(raw_diag)  # same shape
+        sigma = self._sigma_base * tf.exp(raw_diag)  # same shape
 
         # reassemble
         return tf.linalg.set_diag(off, sigma)
 
     def call(self, data_dict):
         raise NotImplementedError(
-            "Base class: user must override the `call` method to define how yields are computed, to match the analysis specific needs! Examples are in /examples."
+            "Base class: user must override the `call` method to define how yields are "
+            "computed, to match the analysis specific needs! Examples are in /examples."
         )
 
     def get_effective_parameters(self):
@@ -104,24 +105,28 @@ class gato_gmm_model(tf.Module):
             "scale_tril": self.get_scale_tril().numpy().tolist()
         }
 
-    def get_effective_boundaries_1d(self,
-            n_steps: int = 100_000,
-            return_mapping: bool = False):
+    def get_effective_boundaries_1d(
+        self,
+        n_steps: int = 100_000,
+        return_mapping: bool = False
+    ):
         """
-        Numerically find the (n_cats-1) crossing points in [0,1] where the most likely Gaussian component switches, 
-        and compute the ordering of components by where they dominate.
+        Numerically find the (n_cats-1) crossing points in [0,1] where the most likely
+        Gaussian component switches, and compute the ordering of components
+        by where they dominate.
 
-        If return_mapping=True, also returns `order` such that order[j] = original component index that occupies bin j.
+        If return_mapping=True, also returns `order` such that
+        order[j] = original component index that occupies bin j.
         """
         # 1) fetch & activate parameters
-        weight   = tf.nn.softmax(self.mixture_logits).numpy()      # (n_cats,)
-        mu_raw  = np.array(self.means)[:, 0]                      # raw
-        mu      = tf.math.sigmoid(mu_raw).numpy()                # in [0,1]
-        sig     = self.get_scale_tril().numpy()[:,0,0]           # (n_cats,)
+        weight = tf.nn.softmax(self.mixture_logits).numpy()      # (n_cats,)
+        mu_raw = np.array(self.means)[:, 0]                      # raw
+        mu = tf.math.sigmoid(mu_raw).numpy()                # in [0,1]
+        sig = self.get_scale_tril().numpy()[:,0,0]           # (n_cats,)
 
         # 2) build grid & evaluate weighted pdfs
         xgrid = np.linspace(0.0, 1.0, n_steps)
-        pdfs  = np.vstack([
+        pdfs = np.vstack([
             w * norm.pdf(xgrid, loc=m, scale=s)
             for w,m,s in zip(weight, mu, sig)
         ]).T  # shape = (n_steps, n_cats)
@@ -139,13 +144,13 @@ class gato_gmm_model(tf.Module):
         # 5) order components by avg_x
         order = np.argsort(avg_x)   # gives original -> sorted mapping
 
-        # 6) now re-index winners into this sorted order (so that “bin 0” is the leftmost, bin 1 next, etc.)
+        # 6) now re-index winners into sorted order (“bin 0” is leftmost, bin 1, ...)
         inv_order = np.argsort(order)  # maps old index -> new index
         winners_sorted = inv_order[winners]
 
         # 7) find the first n_cats-1 transitions
         jumps = np.where(winners_sorted[:-1] != winners_sorted[1:])[0]
-        cuts  = []
+        cuts = []
         for j in jumps:
             cuts.append(0.5*(xgrid[j] + xgrid[j+1]))
             if len(cuts) >= self.n_cats - 1:
@@ -180,14 +185,14 @@ class gato_gmm_model(tf.Module):
     def get_boundaries_for_history(self, n_steps: int = 100_000):
         """
         Return a list of length (n_cats-1).
-        • position i  = boundary between component i and i+1
-        • value       = crossing point in [0,1]   (float)
-        • NaN         = this boundary does not exist in this epoch
+        • position i = boundary between component i and i+1
+        • value = crossing point in [0,1]   (float)
+        • NaN = this boundary does not exist in this epoch
         """
 
         # activated parameters -------------------------------------------------
-        w   = tf.nn.softmax(self.mixture_logits).numpy()           # (n_cats,)
-        mu  = tf.math.sigmoid(self.means[:, 0]).numpy()            # (n_cats,)
+        w = tf.nn.softmax(self.mixture_logits).numpy()           # (n_cats,)
+        mu = tf.math.sigmoid(self.means[:, 0]).numpy()            # (n_cats,)
         sig = self.get_scale_tril().numpy()[:, 0, 0]               # (n_cats,)
 
         # sort by mu to get a *stable* left-to-right ordering
@@ -195,19 +200,19 @@ class gato_gmm_model(tf.Module):
         w, mu, sig = w[order], mu[order], sig[order]
 
         # dense grid + winning component at each x -----------------------------
-        x    = np.linspace(0.0, 1.0, n_steps)
-        pdf  = np.vstack([w_i * norm.pdf(x, mu_i, s_i)
+        x = np.linspace(0.0, 1.0, n_steps)
+        pdf = np.vstack([w_i * norm.pdf(x, mu_i, s_i)
                         for w_i, mu_i, s_i in zip(w, mu, sig)]).T
         winner = np.argmax(pdf, axis=1)                     # (n_steps,)
 
         # where does the winner change?  → boundaries
         jumps = np.where(winner[:-1] != winner[1:])[0]
-        cuts  = 0.5 * (x[jumps] + x[jumps + 1])            # (<= n_cats-1,)
+        cuts = 0.5 * (x[jumps] + x[jumps + 1])            # (<= n_cats-1,)
 
         # put them into fixed slots (NaN where missing)
         slots = np.full(self.n_cats - 1, np.nan, dtype=float)
         for idx, cut in zip(winner[jumps], cuts):
-            # idx  = the left component of the pair (after sorting by µ)
+            # idx = the left component of the pair (after sorting by µ)
             if idx < self.n_cats - 1:
                 slots[idx] = cut
         return slots.tolist()          # length = n_cats-1
@@ -225,13 +230,13 @@ class gato_gmm_model(tf.Module):
         """
 
         raw_logits = self.mixture_logits.numpy()                     # (n_cats,)
-        log_mix    = tf.nn.log_softmax(raw_logits).numpy()           # (n_cats,)
-        raw_means  = self.means.numpy()                              # (n_cats,)
+        log_mix = tf.nn.log_softmax(raw_logits).numpy()           # (n_cats,)
+        raw_means = self.means.numpy()                              # (n_cats,)
         if self.dim == 1:
             # map raw means into [0,1] with sigmoid
             mu_act = expit(raw_means.flatten())
         else:
-            # map raw means into valid vectors via softmax across dims for each component
+            # map raw means into valid vectors via softmax across dims for each bin
             mu_act = tf.nn.softmax(raw_means, axis=1).numpy()
         # covariance
         scales = self.get_scale_tril().numpy()
@@ -262,15 +267,16 @@ class gato_gmm_model(tf.Module):
         B = np.zeros(n_cats)
         B2 = np.zeros(n_cats)
         for i in range(n_cats):
-            sel = (comp==i)
-            if not sel.any(): continue
+            sel = (comp == i)
+            if not sel.any():
+                continue
             w_i = W[sel]
-            B[i]  = w_i.sum()
+            B[i] = w_i.sum()
             B2[i] = (w_i**2).sum()
 
         # compute rel-uncertainty
-        sigma  = np.sqrt(np.maximum(B2,0.0))
-        rel_unc= sigma/np.maximum(B,eps)
+        sigma = np.sqrt(np.maximum(B2,0.0))
+        rel_unc = sigma/np.maximum(B,eps)
 
         # determine order
         if self.dim == 1:
@@ -278,7 +284,10 @@ class gato_gmm_model(tf.Module):
         else:
             # multi-D: sort by per-bin Z
             S_dummy = tf.zeros_like(tf.constant(B, dtype=tf.float32))
-            Zbins = asymptotic_significance(S_dummy, tf.constant(B, dtype=tf.float32)).numpy()
+            Zbins = asymptotic_significance(
+                S_dummy,
+                tf.constant(B, dtype=tf.float32)
+            ).numpy()
             order = np.argsort(-Zbins)
 
         return B[order], rel_unc[order], order
@@ -320,10 +329,15 @@ class gato_sigmoid_model(tf.Module):
         self.raw_boundaries_list = []
         for var_cfg in variables_config:
             n_cats = var_cfg["n_cats"]
-            shape = (n_cats,) if n_cats > 1 else (0,) # in current implementation, the last value is 1, i.e., will be ignored
+            # in current implementation, the last value is 1, i.e., will be ignored
+            shape = (n_cats, ) if n_cats > 1 else (0, )
 
             init_tensor = tf.random.normal(shape=shape, stddev=0.3)
-            raw_var = tf.Variable(init_tensor, trainable=True, name=f"raw_bndry_{var_cfg['name']}")
+            raw_var = tf.Variable(
+                init_tensor,
+                trainable=True,
+                name=f"raw_bndry_{var_cfg['name']}"
+            )
             self.raw_boundaries_list.append(raw_var)
 
     def call(self, data_dict):
@@ -331,13 +345,14 @@ class gato_sigmoid_model(tf.Module):
         For each process in data_dict, we retrieve the relevant columns
         and apply the soft cut membership for each variable in self.variables_config.
 
-        Then we combine membership from all variables. 
+        Then we combine membership from all variables.
         (For simpler usage, we might do "product" of memberships or "logical" approach.)
 
         Returns a figure of merit (scalar) that we want to maximize.
         """
         raise NotImplementedError(
-            "Base class: user must override the `call` method to define how yields are computed, to match the analysis specific needs! Examples are in /examples."
+            "Base class: user must override the `call` method to define how yields are"
+            " computed to match the analysis specific needs! Examples are in /examples."
         )
 
     def get_effective_boundaries(self):
@@ -354,10 +369,11 @@ class gato_sigmoid_model(tf.Module):
 
 def soft_bin_weights(x, raw_boundaries, steepness=50.0):
     """
-    Given a 1D array x and 'n_cats -1' raw boundaries (trainable in [-∞, +∞]),
+    Given a 1D array x and 'n_cats -1' raw boundaries (trainable in [-inf, +inf]),
     apply sigmoid to each boundary so they lie in [0,1], then do piecewise
-    membership weighting for each category. 
-    Returns a list of length n_cats, each entry is a TF tensor of membership weights in [0..1].
+    membership weighting for each category.
+    Returns a list of length n_cats, each entry is a TF tensor
+    of membership weights in [0..1].
     """
     if raw_boundaries.shape[0] == 0:
         # means only 1 category => everything in that category
@@ -375,9 +391,11 @@ def soft_bin_weights(x, raw_boundaries, steepness=50.0):
             wN = safe_sigmoid(x - boundaries[-1], steepness)
             w_list.append(wN)
         else:
-            w_i = safe_sigmoid(x - boundaries[i - 1], steepness) - safe_sigmoid(x - boundaries[i], steepness)
+            w_i = safe_sigmoid(x - boundaries[i - 1], steepness) - \
+                safe_sigmoid(x - boundaries[i], steepness)
             w_list.append(w_i)
     return w_list
+
 
 def calculate_boundaries(raw_boundaries):
     """
@@ -391,4 +409,4 @@ def calculate_boundaries(raw_boundaries):
 
     boundaries = tf.cumsum(increments)
 
-    return boundaries[:-1] # ignore last value which is always 1.0
+    return boundaries[:-1]  # ignore last value which is always 1.0
