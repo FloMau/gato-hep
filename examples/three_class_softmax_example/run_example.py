@@ -1,37 +1,32 @@
-#!/usr/bin/env python3
-"""
-GATO optimisation on a *two-dimensional* soft-max output
-   (P_sig1 , P_sig2 , 1−∑)    → keep only the first two coordinates.
-
-This is a pared-down version of the original 3-D example.  Everything else
-— data generation, training loop, plotting, baseline comparison — is left
-unchanged unless strictly required.
-"""
-
-import os, sys, argparse
+import os
+import sys
+import argparse
 import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
 tfd = tfp.distributions
 
-# ---------------------------------------------------------------------
-#  package imports
-# ---------------------------------------------------------------------
+# Ensure the 'gato' package can be imported
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if repo_root not in sys.path:
-    sys.path.insert(0, repo_root)
+src_path = os.path.join(repo_root, "src")
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
+# Import necessary modules from the gato package
+from gato.models import gato_gmm_model
+from gato.plotting_utils import (
+    plot_stacked_histograms,
+    plot_history,
+    plot_learned_gaussians,
+    assign_bins_and_order,
+    fill_histogram_from_assignments,
+    plot_yield_vs_uncertainty,
+    plot_significance_comparison,
+    plot_bin_boundaries_simplex
+)
+from gato.utils import create_hist, asymptotic_significance, compute_significance_from_hists
+from gato.data_generation import generate_toy_data_3class_3D
+from gato.losses import low_bkg_penalty, high_bkg_uncertainty_penalty
 
-from diffcat_optimizer.differentiable_categories import (
-    gato_gmm_model, asymptotic_significance,
-    low_bkg_penalty, high_bkg_uncertainty_penalty,
-    compute_significance_from_hists                     )
-from diffcat_optimizer.plotting_utils import (
-    plot_stacked_histograms, plot_history, plot_learned_gaussians,
-    assign_bins_and_order, fill_histogram_from_assignments,
-    plot_yield_vs_uncertainty, plot_significance_comparison, plot_bin_boundaries_simplex)
-from diffcat_optimizer.utils import create_hist
-from diffcat_optimizer.data_generation import generate_toy_data_3class_3D
-# ---------------------------------------------------------------------
 
 # ---------------------------------------------------------------------
 # helper: slice to 2-D & convert to tensors
@@ -49,11 +44,12 @@ def convert_data_to_tensors_2d(data_dict):
             "weight"   : tf.constant(df["weight"].values, tf.float32)
         }
     return tensor_data
+
 # ---------------------------------------------------------------------
 def convert_data_to_tensors(data):
     tensor_data = {}
     for proc, df in data.items():
-        nn = np.stack(df["NN_output"].values)[:, :2]   # <-- only 0,1 go to the model
+        nn = np.stack(df["NN_output"].values)[:, :2]
         w  = df["weight"].values
         tensor_data[proc] = {
             "NN_output": tf.constant(nn, dtype=tf.float32),
@@ -62,9 +58,7 @@ def convert_data_to_tensors(data):
     return tensor_data
 
 
-# ---------------------------------------------------------------------
-#  2-D GMM model
-# ---------------------------------------------------------------------
+#  2D GMM gato model
 class GATO_2D(gato_gmm_model):
 
     def call(self, data_dict):
@@ -132,17 +126,7 @@ class GATO_2D(gato_gmm_model):
         zeros = tf.zeros((tf.shape(means_raw)[0], 1), dtype=means_raw.dtype)  # (n_cats,1)
         full_logits = tf.concat([means_raw, zeros], axis=1)                   # shape (n_cats,3)
         probs3 = tf.nn.softmax(full_logits, axis=1)                           # shape (n_cats,3)
-        locs = probs3[:, :self.dim]                                                  # shape (n_cats,2)
-
-
-        # means_raw = self.means  # shape (n_cats, 2)
-        # u = tf.sigmoid(means_raw[:, 0])         # shape (n_cats,)
-        # v = tf.sigmoid(means_raw[:, 1])         # shape (n_cats,)
-        # mu_x = u                                 # shape (n_cats,)
-        # mu_y = v * (1.0 - u)                     # shape (n_cats,)
-        # locs = tf.stack([mu_x, mu_y], axis=1)    # shape (n_cats, 2)
-
-
+        locs = probs3[:, :self.dim]                                           # shape (n_cats,2)
 
         sig1_y = tf.zeros(self.n_cats, tf.float32)
         sig2_y = tf.zeros(self.n_cats, tf.float32)
@@ -158,8 +142,7 @@ class GATO_2D(gato_gmm_model):
             for k in range(self.n_cats):
                 lp.append(
                     tfd.MultivariateNormalTriL(
-                        # loc=means[k],          # already 2-D → no slicing needed
-                        loc=locs[k],          # already 2-D → no slicing needed
+                        loc=locs[k],
                         scale_tril=scale_tril[k]
                     ).log_prob(x)
                 )
@@ -178,12 +161,9 @@ class GATO_2D(gato_gmm_model):
         loss = -tf.sqrt(Z1 * Z2)
         tf.print(loss)
         return loss, bkg_y, bkg_w2
-# ---------------------------------------------------------------------
 
 
-# ---------------------------------------------------------------------
-#  main
-# ---------------------------------------------------------------------
+# Main function to run the example
 def main():
     parser = argparse.ArgumentParser(description="2-D soft-max GATO optimisation")
     parser.add_argument("--epochs",      type=int,   default=250)
@@ -335,14 +315,10 @@ def main():
             y_label=r"Geometric mean $(Z_1,Z_2)$", x_label="Epoch"
         )
 
-
-
         # 1) Stacked histogram of optimized bins:
-        #    Collect background processes (those not starting with "signal")
+        # Collect background processes
         bg_procs = [p for p in data if not p.startswith("signal")]
-        # If your background keys are e.g. "bkg1","bkg2",... this will catch them.
         opt_bkgs = [filled[p] for p in bg_procs]
-        # Choose a signal scaling factor: e.g. 100 for signal1, 500 for signal2 as in baseline example:
         sig1_scale = 100
         sig2_scale = 500
 
@@ -374,17 +350,12 @@ def main():
 
 
         # 2) Yield vs. relative uncertainty plot for background bins:
-        #    Use model.compute_hard_bkg_stats to get per-bin background yield & rel. uncertainty,
-        #    then reorder according to 'order' returned by assign_bins_and_order.
-        #
-        #    model.compute_hard_bkg_stats(tensor_data) returns (B_sorted, rel_unc_sorted, something_else)
-        #    B_sorted and rel_unc_sorted are 1D tensors of length n_cats.
         B_sorted, rel_unc_sorted, _ = model.compute_hard_bkg_stats(tensor_data)
         # reorder according to the sorted bin order:
         B_ord = B_sorted[order]
         unc_ord = rel_unc_sorted[order]
 
-        # Linear version:
+        # Linear
         plot_yield_vs_uncertainty(
             B_ord,
             unc_ord,
@@ -393,7 +364,7 @@ def main():
         )
         print(f"Saved yield vs. unc (linear): yield_vs_unc_{n_cats}bins_linear.pdf")
 
-        # Log version:
+        # Log
         plot_yield_vs_uncertainty(
             B_ord,
             unc_ord,
@@ -401,7 +372,6 @@ def main():
             output_filename=os.path.join(path_gato, f"yield_vs_unc_{n_cats}bins_log.pdf")
         )
         print(f"Saved yield vs. unc (log): yield_vs_unc_{n_cats}bins_log.pdf")
-
 
 
     # ---------- summary comparison

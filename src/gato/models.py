@@ -3,6 +3,8 @@ import numpy as np
 from scipy.stats import norm
 from scipy.special import expit
 import tensorflow_probability as tfp
+from gato.utils import safe_sigmoid, asymptotic_significance
+
 tfd = tfp.distributions
 import math
 
@@ -258,7 +260,7 @@ class gato_gmm_model(tf.Module):
 
         # accumulate B and B2
         B = np.zeros(n_cats)
-        B2= np.zeros(n_cats)
+        B2 = np.zeros(n_cats)
         for i in range(n_cats):
             sel = (comp==i)
             if not sel.any(): continue
@@ -282,70 +284,9 @@ class gato_gmm_model(tf.Module):
         return B[order], rel_unc[order], order
 
 
-def asymptotic_significance(S, B, eps=1e-9):
-    """
-    Default asymptotic significance function with S/sqrt(B) approximation at very low S/B.
-    """
-    safe_B = tf.maximum(B, eps)
-    ratio = S / safe_B
-    # Full Asimov formula:
-    Z_asimov = tf.sqrt(2.0 * ((S + safe_B)*tf.math.log(1.0 + ratio) - S))
-    # S/sqrt(B) approximation for small S/B:
-    Z_approx = S / tf.sqrt(safe_B)
-    # Switch where ratio < 0.1
-    return tf.where(ratio < 0.1, Z_approx, Z_asimov)
-
-def compute_significance_from_hists(h_signal, h_bkg_list):
-    # Sum background counts bin-by-bin.
-    B_vals = sum([h_bkg.values() for h_bkg in h_bkg_list])
-    S_vals = h_signal.values()
-    S_tensor = tf.constant(S_vals, dtype=tf.float32)
-    B_tensor = tf.constant(B_vals, dtype=tf.float32)
-    Z_bins = asymptotic_significance(S_tensor, B_tensor)
-    Z_overall = np.sqrt(np.sum(Z_bins.numpy()**2))
-    return Z_overall
-
-def low_bkg_penalty(bkg_yields, threshold=10.0):
-    """
-    bkg_yields: tf.Tensor of shape [ncat], the background yields in each category.
-    The penalty is summed over all categories.
-    """
-    # penalty per category
-    penalty_vals = (
-        tf.nn.relu(threshold - bkg_yields)
-    )**2
-    # sum over categories
-    total_penalty = tf.reduce_sum(penalty_vals)
-
-    return total_penalty
-
-def high_bkg_uncertainty_penalty(bkg_sumsq, bkg_yields, rel_threshold=0.2):
-    """
-    Penalize bins whose *relative* MC uncertainty exceeds rel_threshold.
-    
-    bkg_sumsq:   tf.Tensor [ncat], sum of w_i^2 in each bin
-    bkg_yields:  tf.Tensor [ncat], sum of w_i in each bin
-    rel_threshold: float, e.g. 0.2 for 20% relative error
-    
-    penalty_j = max(sigma_j / B_j - rel_threshold, 0)^2
-    total_penalty = sum_j penalty_j
-    """
-    # avoid division by zero
-    safe_B = tf.maximum(bkg_yields, 1e-8)
-    # sigma_j = sqrt(sum_i w_i^2)
-    sigma = tf.sqrt(tf.maximum(bkg_sumsq, 0.0))
-    rel_unc = sigma / safe_B
-    
-    # only penalize above threshold
-    over = tf.nn.relu(rel_unc - rel_threshold)
-    penalty_per_bin = over**2
-    
-    return tf.reduce_sum(penalty_per_bin)
-
-
 # keeping some old class below
 # this one is based on sigmoid functions with learnable offset
-class _old_DifferentiableCutModel(tf.Module):
+class gato_sigmoid_model(tf.Module):
     """
     A generic model that:
       - Has one or more variables to cut on,
@@ -363,7 +304,6 @@ class _old_DifferentiableCutModel(tf.Module):
     def __init__(
         self,
         variables_config,
-        significance_func=asymptotic_significance,
         name="DifferentiableCutModel",
         **kwargs
     ):
@@ -372,12 +312,9 @@ class _old_DifferentiableCutModel(tf.Module):
           - "name": str, the name of the column in the data
           - "n_cats": int, number of categories for this variable
           - optionally "steepness": float for the soft cut transitions (defaults to 50)
-
-        significance_func: function S, B -> significance
         """
         super().__init__(name=name)
         self.variables_config = variables_config
-        self.significance_func = significance_func
 
         # Create a trainable tf.Variable for each variable's boundaries.
         self.raw_boundaries_list = []
@@ -414,9 +351,6 @@ class _old_DifferentiableCutModel(tf.Module):
                 out[var_cfg["name"]] = calculate_boundaries(raw_var)
         return out
 
-def safe_sigmoid(z, steepness):
-    z_clipped = tf.clip_by_value(-steepness * z, -75.0, 75.0)
-    return 1.0 / (1.0 + tf.exp(z_clipped))
 
 def soft_bin_weights(x, raw_boundaries, steepness=50.0):
     """

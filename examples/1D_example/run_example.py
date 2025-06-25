@@ -1,21 +1,41 @@
 import numpy as np
-import sys, os
+import sys
+import os
 import argparse
 import tensorflow as tf
 import hist
 import tensorflow_probability as tfp
 tfd = tfp.distributions
 
-# Append the repo root to sys.path so that we can import our core modules.
+# Ensure the 'gato' package can be imported: insert the 'src' directory into sys.path
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if repo_root not in sys.path:
-    sys.path.insert(0, repo_root)
+src_path = os.path.join(repo_root, "src")
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
 
-from diffcat_optimizer.plotting_utils import plot_stacked_histograms, plot_history, plot_yield_vs_uncertainty, plot_significance_comparison, plot_gmm_1d
-from diffcat_optimizer.differentiable_categories import asymptotic_significance, gato_gmm_model, low_bkg_penalty, compute_significance_from_hists, high_bkg_uncertainty_penalty
-from diffcat_optimizer.utils import df_dict_to_tensors, create_hist, align_boundary_tracks
-from diffcat_optimizer.data_generation import generate_toy_data_1D
-
+# Import from the installed/packaged gato modules
+from gato.plotting_utils import (
+    plot_stacked_histograms,
+    plot_history,
+    plot_yield_vs_uncertainty,
+    plot_significance_comparison,
+    plot_gmm_1d,               # if your 1D example uses this helper
+)
+from gato.models import (
+    gato_gmm_model,
+)
+from gato.utils import (
+    asymptotic_significance,
+    compute_significance_from_hists,
+    df_dict_to_tensors,       # if used in your 1D script
+    create_hist,
+    align_boundary_tracks,     # if this helper was in utils
+)
+from gato.losses import (
+    low_bkg_penalty,
+    high_bkg_uncertainty_penalty,
+)
+from gato.data_generation import generate_toy_data_1D
 
 class gato_1D(gato_gmm_model):
     def __init__(self, n_cats, temperature=1.0, name="el_gato"):
@@ -263,9 +283,9 @@ def main():
                 print(f"[n_bins={nbins}] Epoch {epoch}: total_loss = {total_loss.numpy():.3f}, base_loss={loss.numpy():.3f}")
                 print("Effective boundaries:", model.get_effective_boundaries_1d())
             # save the trained GATO model
-            checkpoint_dir = os.path.join(path_plots, f"checkpoints/{nbins}_bins")
-            os.makedirs(checkpoint_dir, exist_ok=True)
-            model.save(checkpoint_dir)
+        checkpoint_dir = os.path.join(path_plots, f"checkpoints/{nbins}_bins")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        model.save(checkpoint_dir)
         # Rebuild optimized histograms using effective boundaries
         eff_boundaries = model.get_effective_boundaries_1d()
         print(f"Optimized boundaries for {nbins} bins: {eff_boundaries}")
