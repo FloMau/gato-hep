@@ -1,6 +1,7 @@
-import tensorflow as tf
 import hist
 import numpy as np
+import tensorflow as tf
+
 
 def df_dict_to_tensors(data_dict):
     """
@@ -13,6 +14,7 @@ def df_dict_to_tensors(data_dict):
             col: tf.constant(df[col].values, dtype=tf.float32) for col in df.columns
         }
     return tensor_data
+
 
 def create_hist(data, weights=None, bins=50, low=0.0, high=1.0, name="NN_output"):
     # If bins is an integer, we do regular binning:
@@ -27,13 +29,16 @@ def create_hist(data, weights=None, bins=50, low=0.0, high=1.0, name="NN_output"
         h.fill(data)
     return h
 
+
 def safe_sigmoid(z, steepness):
     z_clipped = tf.clip_by_value(-steepness * z, -75.0, 75.0)
     return 1.0 / (1.0 + tf.exp(z_clipped))
 
+
 def asymptotic_significance(S, B, eps=1e-9):
     """
-    Default asymptotic significance function with S/sqrt(B) approximation at very low S/B.
+    Default asymptotic significance function from arxiv:1007.1727,
+    with S/sqrt(B) approximation at very low S/B.
     """
     safe_B = tf.maximum(B, eps)
     ratio = S / safe_B
@@ -44,6 +49,7 @@ def asymptotic_significance(S, B, eps=1e-9):
     # Switch where ratio < 0.1
     return tf.where(ratio < 0.1, Z_approx, Z_asimov)
 
+
 def compute_significance_from_hists(h_signal, h_bkg_list):
     # Sum background counts bin-by-bin.
     B_vals = sum([h_bkg.values() for h_bkg in h_bkg_list])
@@ -51,8 +57,7 @@ def compute_significance_from_hists(h_signal, h_bkg_list):
     S_tensor = tf.constant(S_vals, dtype=tf.float32)
     B_tensor = tf.constant(B_vals, dtype=tf.float32)
     Z_bins = asymptotic_significance(S_tensor, B_tensor)
-    Z_overall = np.sqrt(np.sum(Z_bins.numpy()**2))
-    return Z_overall
+    return np.sqrt(np.sum(Z_bins.numpy()**2))
 
 
 def align_boundary_tracks(history, dist_tol=0.02, gap_max=20):
@@ -63,18 +68,18 @@ def align_boundary_tracks(history, dist_tol=0.02, gap_max=20):
     if not history:
         return np.empty((0, 0))
 
-    n_epochs    = len(history)
-    n_tracks    = len(history[0])
-    tracks      = np.full((n_epochs, n_tracks), np.nan)
-    last_val    = np.array(history[0] + [np.nan]*(n_tracks - len(history[0])))
-    last_seen   = np.zeros(n_tracks, dtype=int)          # epoch 0
+    n_epochs = len(history)
+    n_tracks = len(history[0])
+    tracks = np.full((n_epochs, n_tracks), np.nan)
+    last_val = np.array(history[0] + [np.nan]*(n_tracks - len(history[0])))
+    last_seen = np.zeros(n_tracks, dtype=int)          # epoch 0
 
     tracks[0, :len(history[0])] = history[0]
 
     def add_track():
         nonlocal tracks, last_val, last_seen, n_tracks
-        tracks    = np.hstack([tracks, np.full((n_epochs, 1), np.nan)])
-        last_val  = np.append(last_val,  np.nan)
+        tracks = np.hstack([tracks, np.full((n_epochs, 1), np.nan)])
+        last_val = np.append(last_val,  np.nan)
         last_seen = np.append(last_seen, -gap_max*2)     # very old
         n_tracks += 1
         return n_tracks - 1
@@ -89,9 +94,9 @@ def align_boundary_tracks(history, dist_tol=0.02, gap_max=20):
             dist = np.abs(np.asarray(cuts) - last_val[t])
             j = np.argmin(dist)
             if dist[j] < dist_tol:
-                last_val[t]    = cuts.pop(j)
-                last_seen[t]   = ep
-                tracks[ep, t]  = last_val[t]
+                last_val[t] = cuts.pop(j)
+                last_seen[t] = ep
+                tracks[ep, t] = last_val[t]
 
         # --- any remaining cuts: first try inactive recent tracks --------
         for cut in list(cuts):              # iterate over a *copy*
@@ -102,16 +107,16 @@ def align_boundary_tracks(history, dist_tol=0.02, gap_max=20):
                 (np.abs(last_val - cut) < dist_tol)
             )[0]
             if cand.size:
-                t            = cand[0]
-                last_val[t]  = cut
+                t = cand[0]
+                last_val[t] = cut
                 last_seen[t] = ep
                 tracks[ep, t] = cut
                 cuts.remove(cut)
 
         # --- still left → brand-new columns ------------------------------
         for cut in cuts:
-            t            = add_track()
-            last_val[t]  = cut
+            t = add_track()
+            last_val[t] = cut
             last_seen[t] = ep
             tracks[ep, t] = cut
 

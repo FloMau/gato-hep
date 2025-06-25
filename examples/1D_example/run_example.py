@@ -1,10 +1,12 @@
-import numpy as np
-import sys
-import os
 import argparse
-import tensorflow as tf
+import os
+import sys
+
 import hist
+import numpy as np
+import tensorflow as tf
 import tensorflow_probability as tfp
+
 tfd = tfp.distributions
 
 # Ensure the 'gato' package can be imported: insert the 'src' directory into sys.path
@@ -14,28 +16,29 @@ if src_path not in sys.path:
     sys.path.insert(0, src_path)
 
 # Import from the installed/packaged gato modules
-from gato.plotting_utils import (
-    plot_stacked_histograms,
-    plot_history,
-    plot_yield_vs_uncertainty,
-    plot_significance_comparison,
-    plot_gmm_1d,               # if your 1D example uses this helper
+from gato.data_generation import generate_toy_data_1D
+from gato.losses import (
+    high_bkg_uncertainty_penalty,
+    low_bkg_penalty,
 )
 from gato.models import (
     gato_gmm_model,
 )
+from gato.plotting_utils import (
+    plot_gmm_1d,  # if your 1D example uses this helper
+    plot_history,
+    plot_significance_comparison,
+    plot_stacked_histograms,
+    plot_yield_vs_uncertainty,
+)
 from gato.utils import (
+    align_boundary_tracks,  # if this helper was in utils
     asymptotic_significance,
     compute_significance_from_hists,
-    df_dict_to_tensors,       # if used in your 1D script
     create_hist,
-    align_boundary_tracks,     # if this helper was in utils
+    df_dict_to_tensors,  # if used in your 1D script
 )
-from gato.losses import (
-    low_bkg_penalty,
-    high_bkg_uncertainty_penalty,
-)
-from gato.data_generation import generate_toy_data_1D
+
 
 class gato_1D(gato_gmm_model):
     def __init__(self, n_cats, temperature=1.0, name="el_gato"):
@@ -49,9 +52,9 @@ class gato_1D(gato_gmm_model):
 
     def call(self, data_dict):
         # pull out our params
-        log_mix    = tf.nn.log_softmax(self.mixture_logits)        # [n_cats]
+        log_mix = tf.nn.log_softmax(self.mixture_logits)        # [n_cats]
         scale_tril = self.get_scale_tril()                         # [n_cats,1,1]
-        means      = tf.math.sigmoid(self.means)                   # [n_cats,1]
+        means = tf.math.sigmoid(self.means)                   # [n_cats,1]
 
         # accumulators
         S = tf.zeros([self.n_cats], dtype=tf.float32)
@@ -71,15 +74,21 @@ class gato_1D(gato_gmm_model):
                     loc=means[i],
                     scale_tril=scale_tril[i]
                 )
-                log_probs.append(dist.log_prob(x))                             # [N]
-            log_probs = tf.stack(log_probs, axis=1)                            # [N,n_cats]
+                log_probs.append(dist.log_prob(x))   # [N]
+            log_probs = tf.stack(log_probs, axis=1)  # [N,n_cats]
             # posterior memberships
             log_joint = (log_probs + log_mix)
-            memberships = tf.nn.softmax(log_joint / self.temperature, axis=1)  # [N,n_cats]
+            memberships = tf.nn.softmax(
+                log_joint / self.temperature, axis=1
+            )  # [N,n_cats]
 
             # sum into yields
-            yields = tf.reduce_sum(memberships * tf.expand_dims(w,1), axis=0)  # [n_cats]
-            sumw2 = tf.reduce_sum(memberships * tf.expand_dims(w2,1), axis=0)  # [n_cats]
+            yields = tf.reduce_sum(
+                memberships * tf.expand_dims(w,1), axis=0
+            )  # [n_cats]
+            sumw2 = tf.reduce_sum(
+                memberships * tf.expand_dims(w2,1), axis=0
+            )  # [n_cats]
 
             if proc == "signal":
                 S += yields
@@ -88,8 +97,8 @@ class gato_1D(gato_gmm_model):
                 B_sumw2 += sumw2
 
         # Asimov per-bin + quadrature
-        Z_bins = asymptotic_significance(S, B)                     # [n_cats]
-        Z_tot  = tf.sqrt(tf.reduce_sum(Z_bins**2))                 # scalar
+        Z_bins = asymptotic_significance(S, B)        # [n_cats]
+        Z_tot = tf.sqrt(tf.reduce_sum(Z_bins**2))     # scalar
 
         return -Z_tot, B, B_sumw2
 
@@ -103,42 +112,58 @@ def main():
                         default=250,
                         help="number of training epochs (default: 250)")
 
-    parser.add_argument("--gato-bins",
-                        type=int,
-                        nargs="+",
-                        default=[3, 5, 10],
-                        metavar="N",
-                        help="List of target bin counts for the GATO run (default: 3,5,10)")
+    parser.add_argument(
+        "--gato-bins",
+        type=int,
+        nargs="+",
+        default=[3, 5, 10],
+        metavar="N",
+        help="List of target bin counts for the GATO run (default: 3,5,10)"
+    )
 
-    parser.add_argument("--lam-yield",
-                        type=float,
-                        default=0.0,
-                        help=r"lambda for the low-background-yield penalty (default: 0)")
+    parser.add_argument(
+        "--lam-yield",
+        type=float,
+        default=0.0,
+        help=r"lambda for the low-background-yield penalty (default: 0)"
+    )
 
-    parser.add_argument("--lam-unc",
-                        type=float,
-                        default=0.0,
-                        help=r"lambda for the high-uncertainty penalty (default: 0)")
+    parser.add_argument(
+        "--lam-unc",
+        type=float,
+        default=0.0,
+        help=r"lambda for the high-uncertainty penalty (default: 0)"
+    )
 
-    parser.add_argument("--thr-yield",
-                        type=float,
-                        default=5.0,
-                        help="Threshold (events) below which the low-yield penalty turns on (default: 10)")
+    parser.add_argument(
+        "--thr-yield",
+        type=float,
+        default=5.0,
+        help="Threshold (events) below which the low-yield "
+        "penalty turns on (default: 10)"
+    )
 
-    parser.add_argument("--thr-unc",
-                        type=float,
-                        default=0.20,
-                        help="Relative uncertainty above which the uncertainty penalty turns on (default: 0.20)")
+    parser.add_argument(
+        "--thr-unc",
+        type=float,
+        default=0.20,
+        help="Relative uncertainty above which the uncertainty "
+        "penalty turns on (default: 0.20)"
+    )
 
-    parser.add_argument("--n-bkg",
-                        type=int,
-                        default=300000,
-                        help="Total number of background events to generate.")
+    parser.add_argument(
+        "--n-bkg",
+        type=int,
+        default=300000,
+        help="Total number of background events to generate."
+    )
 
-    parser.add_argument("--out",
-                        type=str,
-                        default="Plots",
-                        help="Suffix for the output directory. Default: \"Plots\"")
+    parser.add_argument(
+        "--out",
+        type=str,
+        default="Plots",
+        help="Suffix for the output directory. Default: \"Plots\""
+    )
 
     args = parser.parse_args()
 
@@ -154,19 +179,47 @@ def main():
     data = generate_toy_data_1D(
         n_signal=100000,
         n_bkg=n_bkg,
-        xs_signal=0.5, xs_bkg1=50, xs_bkg2=15, xs_bkg3=10, # in pb
-        lumi=100,         # in /fb
+        xs_signal=0.5, xs_bkg1=50, xs_bkg2=15, xs_bkg3=10,  # in pb
+        lumi=100,  # in /fb
         seed=42
     )
 
-    # Create fixed histograms (with equidistant binning using 1500 bins as baseline, will be rebinned afterwards).
+    # Create fixed histograms, will be rebinned afterwards
     n_bins = 1500
     low = 0.0
     high = 1.0
-    hist_signal = create_hist(data["signal"]["NN_output"], weights=data["signal"]["weight"], bins=n_bins, low=low, high=high, name="Signal")
-    hist_bkg1 = create_hist(data["bkg1"]["NN_output"], weights=data["bkg1"]["weight"], bins=n_bins, low=low, high=high, name="Bkg1")
-    hist_bkg2 = create_hist(data["bkg2"]["NN_output"], weights=data["bkg2"]["weight"], bins=n_bins, low=low, high=high, name="Bkg2")
-    hist_bkg3 = create_hist(data["bkg3"]["NN_output"], weights=data["bkg3"]["weight"], bins=n_bins, low=low, high=high, name="Bkg3")
+    hist_signal = create_hist(
+        data["signal"]["NN_output"],
+        weights=data["signal"]["weight"],
+        bins=n_bins,
+        low=low,
+        high=high,
+        name="Signal"
+    )
+    hist_bkg1 = create_hist(
+        data["bkg1"]["NN_output"],
+        weights=data["bkg1"]["weight"],
+        bins=n_bins,
+        low=low,
+        high=high,
+        name="Bkg1"
+    )
+    hist_bkg2 = create_hist(
+        data["bkg2"]["NN_output"],
+        weights=data["bkg2"]["weight"],
+        bins=n_bins,
+        low=low,
+        high=high,
+        name="Bkg2"
+    )
+    hist_bkg3 = create_hist(
+        data["bkg3"]["NN_output"],
+        weights=data["bkg3"]["weight"],
+        bins=n_bins,
+        low=low,
+        high=high,
+        name="Bkg3"
+    )
     bkg_hists = [hist_bkg1, hist_bkg2, hist_bkg3]
 
     # plot the backgrounds:
@@ -180,7 +233,7 @@ def main():
 
     path_plots = f"examples/1D_example/{args.out}/"
     os.makedirs(path_plots, exist_ok=True)
-    fixed_plot_filename = path_plots + f"toy_data.pdf"
+    fixed_plot_filename = path_plots + "toy_data.pdf"
     plot_stacked_histograms(
         stacked_hists=[bkg_hist[::hist.rebin(30)] for bkg_hist in bkg_hists],
         process_labels=process_labels,
@@ -211,9 +264,12 @@ def main():
 
         Z_equidistant = compute_significance_from_hists(hist_signal_rb, bkg_hists_rb)
         equidistant_significances[nbins] = Z_equidistant
-        print(f"Fixed binning ({nbins} bins): Overall significance = {Z_equidistant:.3f}")
+        print(
+            f"Fixed binning ({nbins} bins): Overall significance = {Z_equidistant:.3f}"
+        )
 
-        fixed_plot_filename = path_plots + f"NN_output_distribution_fixed_{nbins}bins.pdf"
+        fixed_plot_filename = path_plots + \
+            f"NN_output_distribution_fixed_{nbins}bins.pdf"
         plot_stacked_histograms(
             stacked_hists=bkg_hists_rb,
             process_labels=process_labels,
@@ -241,13 +297,23 @@ def main():
     for nbins in gato_binning_options:
 
         @tf.function
-        def train_step(model, tensor_data, optimizer, lam_yield=0.0, lam_unc=0.0, threshold_yield=5, rel_threshold_unc=0.2):
+        def train_step(
+            model,
+            tensor_data,
+            optimizer,
+            lam_yield=0.0,
+            lam_unc=0.0,
+            threshold_yield=5,
+            rel_threshold_unc=0.2
+        ):
             with tf.GradientTape() as tape:
                 # assume your call() now returns (loss, B, B_sumsq)
                 loss, B, B_sumw2 = model.call(tensor_data)
 
-                penalty_yield  = low_bkg_penalty(B, threshold=threshold_yield)
-                penalty_unc  = high_bkg_uncertainty_penalty(B_sumw2, B, rel_threshold=rel_threshold_unc)
+                penalty_yield = low_bkg_penalty(B, threshold=threshold_yield)
+                penalty_unc = high_bkg_uncertainty_penalty(
+                    B_sumw2, B, rel_threshold=rel_threshold_unc
+                )
 
                 # you can give them different weights
                 total_loss = loss + lam_yield*penalty_yield + lam_unc*penalty_unc
@@ -256,8 +322,8 @@ def main():
             return total_loss, loss, penalty_yield, penalty_unc
 
         # --- Optimization: create a model instance with n_cats = nbins ---
-        model = gato_1D(n_cats=nbins, temperature=1)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.01, beta_1=0.9) # if lam_yield==0 else 0.5)
+        model = gato_1D(n_cats=nbins, temperature=0.5)
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.01, beta_1=0.9)
 
         loss_history = []
         penalty_yield_history = []
@@ -267,7 +333,10 @@ def main():
 
         for epoch in range(epochs):
 
-            total_loss, loss, penalty_yield, penalty_unc = train_step(model, tensor_data, optimizer, lam_yield=lam_yield, lam_unc=lam_unc, threshold_yield=yield_thr, rel_threshold_unc=unc_thr)
+            total_loss, loss, penalty_yield, penalty_unc = train_step(
+                model, tensor_data, optimizer, lam_yield=lam_yield,
+                lam_unc=lam_unc, threshold_yield=yield_thr, rel_threshold_unc=unc_thr
+            )
 
             # Save the history
             loss_history.append(loss.numpy())
@@ -280,7 +349,11 @@ def main():
             boundary_history_raw.append(raw_cuts)                # keep raw
 
             if epoch % 10 == 0 or epoch == epochs - 1:
-                print(f"[n_bins={nbins}] Epoch {epoch}: total_loss = {total_loss.numpy():.3f}, base_loss={loss.numpy():.3f}")
+                print(
+                    f"[n_bins={nbins}] Epoch {epoch}: \
+                    total_loss = {total_loss.numpy():.3f}, \
+                    base_loss={loss.numpy():.3f}"
+                )
                 print("Effective boundaries:", model.get_effective_boundaries_1d())
             # save the trained GATO model
         checkpoint_dir = os.path.join(path_plots, f"checkpoints/{nbins}_bins")
@@ -291,10 +364,30 @@ def main():
         print(f"Optimized boundaries for {nbins} bins: {eff_boundaries}")
 
         opt_bin_edges = np.concatenate(([low], np.array(eff_boundaries), [high]))
-        h_signal_opt = create_hist(data["signal"]["NN_output"], weights=data["signal"]["weight"], bins=opt_bin_edges, name="Signal_opt")
-        h_bkg1_opt = create_hist(data["bkg1"]["NN_output"], weights=data["bkg1"]["weight"], bins=opt_bin_edges, name="Bkg1_opt")
-        h_bkg2_opt = create_hist(data["bkg2"]["NN_output"], weights=data["bkg2"]["weight"], bins=opt_bin_edges, name="Bkg2_opt")
-        h_bkg3_opt = create_hist(data["bkg3"]["NN_output"], weights=data["bkg3"]["weight"], bins=opt_bin_edges, name="Bkg3_opt")
+        h_signal_opt = create_hist(
+            data["signal"]["NN_output"],
+            weights=data["signal"]["weight"],
+            bins=opt_bin_edges,
+            name="Signal_opt"
+        )
+        h_bkg1_opt = create_hist(
+            data["bkg1"]["NN_output"],
+            weights=data["bkg1"]["weight"],
+            bins=opt_bin_edges,
+            name="Bkg1_opt"
+        )
+        h_bkg2_opt = create_hist(
+            data["bkg2"]["NN_output"],
+            weights=data["bkg2"]["weight"],
+            bins=opt_bin_edges,
+            name="Bkg2_opt"
+        )
+        h_bkg3_opt = create_hist(
+            data["bkg3"]["NN_output"],
+            weights=data["bkg3"]["weight"],
+            bins=opt_bin_edges,
+            name="Bkg3_opt"
+        )
         opt_bkg_hists = [h_bkg1_opt, h_bkg2_opt, h_bkg3_opt]
 
         # Compute significance from these optimized histograms.
@@ -303,7 +396,8 @@ def main():
 
         print(f"Optimized binning ({nbins} bins): Overall significance = {Z_opt:.3f}")
 
-        opt_plot_filename = path_plots + f"NN_output_distribution_optimized_{nbins}bins.pdf"
+        opt_plot_filename = path_plots + \
+            f"NN_output_distribution_optimized_{nbins}bins.pdf"
         plot_stacked_histograms(
             stacked_hists=opt_bkg_hists,
             process_labels=process_labels,
@@ -353,7 +447,9 @@ def main():
             boundaries=False,
         )
 
-        boundary_history = align_boundary_tracks(boundary_history_raw, dist_tol=0.05)   # ndarray (epochs, n_tracks)
+        boundary_history = align_boundary_tracks(
+            boundary_history_raw, dist_tol=0.05
+        )   # ndarray (epochs, n_tracks)
         boundary_plot_name = path_plots + f"history_boundaries_{nbins}bins.pdf"
         plot_history(
             history_data=boundary_history,
@@ -373,7 +469,8 @@ def main():
             B_sorted,
             rel_unc_sorted,
             log=True,
-            output_filename=path_plots + f"yield_vs_uncertainty_{nbins}bins_sorted_log.pdf",
+            output_filename=path_plots +
+            f"yield_vs_uncertainty_{nbins}bins_sorted_log.pdf",
         )
         # plot the learned GMM in 1D
         plot_gmm_1d(
@@ -388,6 +485,7 @@ def main():
         {"": {nb: optimized_significances[nb] for nb in gato_binning_options}},
         output_filename=path_plots + "significanceComparison.pdf",
     )
+
 
 if __name__ == "__main__":
     main()

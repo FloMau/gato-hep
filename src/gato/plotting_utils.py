@@ -1,15 +1,17 @@
 import os
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.patches import Ellipse, Patch
-from matplotlib.colors import ListedColormap, BoundaryNorm
-import mplhep as hep
-plt.style.use(hep.style.ROOT)
+
 import hist
-from scipy.special import expit
-from scipy.stats import multivariate_normal, norm
+import matplotlib.pyplot as plt
+import mplhep as hep
+import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
+from matplotlib.colors import BoundaryNorm, ListedColormap
+from matplotlib.patches import Ellipse, Patch
+from scipy.special import expit
+from scipy.stats import multivariate_normal, norm
+
+plt.style.use(hep.style.ROOT)
 tfd = tfp.distributions
 
 
@@ -23,8 +25,6 @@ def plot_stacked_histograms(
     normalize=False,
     log=False,
     log_min=None,
-    include_flow=False,
-    colors=None,
     return_figure=False,
     ax=None,
 ):
@@ -42,17 +42,9 @@ def plot_stacked_histograms(
       - normalize: if True, normalize the histograms.
       - log: if True, use log scale on the y-axis.
       - log_min: if provided, set the y-axis lower limit.
-      - include_flow: if True, include overflow/underflow (functionality not implemented here).
-      - colors: list of colors for the backgrounds.
       - return_figure: if True, return (fig, ax) instead of saving.
       - ax: if provided, plot on the given axes.
     """
-
-    # Optionally include overflow/underflow here if needed (not implemented in this version)
-    # if include_flow:
-    #     stacked_hists = [include_overflow_underflow(h) for h in stacked_hists]
-    #     if signal_hists:
-    #         signal_hists = [include_overflow_underflow(h) for h in signal_hists]
 
     # Normalization if requested.
     if normalize:
@@ -90,7 +82,6 @@ def plot_stacked_histograms(
         linewidth=1,
         yerr=mc_errors_list,
         ax=ax_main,
-        # color=colors,
         alpha=0.8,
     )
 
@@ -139,7 +130,13 @@ def plot_stacked_histograms(
 
     handles, labels = ax_main.get_legend_handles_labels()
     ncols = 2 if len(labels) < 6 else 3
-    ax_main.legend(loc="upper right", fontsize=18, ncols=ncols, labelspacing=0.4, columnspacing=1.5)
+    ax_main.legend(
+        loc="upper right",
+        fontsize=18,
+        ncols=ncols,
+        labelspacing=0.4,
+        columnspacing=1.5
+    )
 
     # Save or return the figure.
     if not return_figure:
@@ -149,6 +146,7 @@ def plot_stacked_histograms(
         plt.close(fig)
     else:
         return fig, ax_main
+    return None
 
 
 def plot_history(history_data, output_filename,
@@ -161,9 +159,9 @@ def plot_history(history_data, output_filename,
     if not boundaries:                        # scalar history
         ax.plot(epochs, history_data, marker="o")
     else:                                     # matrix  (epochs, n_tracks)
-        values  = np.asarray(history_data, dtype=float)
-        n_trk   = values.shape[1]
-        cmap    = plt.get_cmap("tab20", n_trk)
+        values = np.asarray(history_data, dtype=float)
+        n_trk = values.shape[1]
+        cmap = plt.get_cmap("tab20", n_trk)
         for t in range(n_trk):
             ax.plot(epochs, values[:, t],
                     marker="o", markersize=3,
@@ -189,16 +187,19 @@ def plot_history(history_data, output_filename,
     fig.savefig(output_filename)
     plt.close(fig)
 
+
 def assign_bins_and_order(model, data, reduce=False, eps=1e-6):
     """
     Given a trained multidimensional cut model and a data dictionary,
-    compute for each event the hard assignment (using argmax over joint log-probabilities),
+    compute for each event the hard assignment
+    (using argmax over joint log-probabilities),
     accumulate yields to compute a significance measure per bin,
     and then re-map the original bin indices to new indices so that the
     most significant bin gets the highest new index.
 
     Returns:
-      bin_assignments: dict mapping process name -> array of new bin indices for each event.
+      bin_assignments: dict mapping process name ->
+      array of new bin indices for each event.
       order: sorted array of original bin indices (ascending significance).
       sb_ratios: array of significance (S/sqrt(B)) for each original bin.
       inv_mapping: dictionary mapping new bin index -> original bin index.
@@ -262,8 +263,6 @@ def assign_bins_and_order(model, data, reduce=False, eps=1e-6):
 
     # order: sort original bin indices in ascending order (lowest significance first)
     order = np.argsort(significances)  # e.g., [orig_bin_low, ..., orig_bin_high]
-
-    # Create new mapping: assign new indices 0...n_cats-1 in order of ascending significance.
     new_order_mapping = {orig: new for new, orig in enumerate(order)}
     # And the inverse mapping: new index -> original index.
     inv_mapping = {v: k for k, v in new_order_mapping.items()}
@@ -271,7 +270,9 @@ def assign_bins_and_order(model, data, reduce=False, eps=1e-6):
     # Remap bin assignments.
     for proc in bin_assignments:
         orig_assign = bin_assignments[proc]
-        bin_assignments[proc] = np.vectorize(lambda i: new_order_mapping[i])(orig_assign)
+        bin_assignments[proc] = np.vectorize(
+            lambda i: new_order_mapping[i]
+        )(orig_assign)
 
     return bin_assignments, order, significances, inv_mapping
 
@@ -286,7 +287,17 @@ def fill_histogram_from_assignments(assignments, weights, nbins, name="BinAssign
     h.fill(assignments, weight=weights)
     return h
 
-def plot_learned_gaussians(data, model, dim_x, dim_y, output_filename, conf_level=2.30, inv_mapping=None, reduce=False):
+
+def plot_learned_gaussians(
+    data,
+    model,
+    dim_x,
+    dim_y,
+    output_filename,
+    conf_level=2.30,
+    inv_mapping=None,
+    reduce=False
+):
     """
     Plot the learned Gaussian components (projected to two dimensions) and the data.
 
@@ -315,14 +326,27 @@ def plot_learned_gaussians(data, model, dim_x, dim_y, output_filename, conf_leve
     fig, ax = plt.subplots(figsize=(10, 8))
 
     # Scatter the data.
-    colors = {"signal": "tab:red", "bkg1": "tab:blue", "bkg2": "tab:orange", "bkg3": "tab:cyan"}
+    colors = {
+        "signal": "tab:red",
+        "bkg1": "tab:blue",
+        "bkg2": "tab:orange",
+        "bkg3": "tab:cyan"
+    }
     markers = {"signal": "o", "bkg1": "s", "bkg2": "v", "bkg3": "d"}
     stop = 1000
     for proc, df in data.items():
         arr = np.stack(df["NN_output"].values)
         x_vals = arr[:, dim_x]
         y_vals = arr[:, dim_y]
-        ax.scatter(x_vals[:stop], y_vals[:stop], s=10, alpha=0.3, label=proc, color=colors.get(proc, "gray"), marker=markers.get(proc, "o"))
+        ax.scatter(
+            x_vals[:stop],
+            y_vals[:stop],
+            s=10,
+            alpha=0.3,
+            label=proc,
+            color=colors.get(proc, "gray"),
+            marker=markers.get(proc, "o")
+        )
 
     # Plot ellipses for each new bin index.
     # We iterate over new bin indices in ascending order (0 to n_cats-1).
@@ -344,7 +368,7 @@ def plot_learned_gaussians(data, model, dim_x, dim_y, output_filename, conf_leve
             mu = tf.nn.softmax(means[orig]).numpy()[[dim_x, dim_y]]
         cov_proj = covariances[orig][np.ix_([dim_x, dim_y], [dim_x, dim_y])]
         eigenvals, eigenvecs = np.linalg.eigh(cov_proj)
-        # Here, since np.linalg.eigh returns ascending eigenvalues, take the eigenvector for the larger eigenvalue.
+        # Sort eigenvalues and eigenvectors in descending order.
         idx = np.argsort(eigenvals)[::-1]
         eigenvals = eigenvals[idx]
         eigenvecs = eigenvecs[:, idx]
@@ -358,8 +382,11 @@ def plot_learned_gaussians(data, model, dim_x, dim_y, output_filename, conf_leve
         linestyle = linestyles[new_bin//n_colors]
         edgecolor = colors[new_bin]
 
-        ellipse = Ellipse(xy=mu, width=width, height=height, angle=angle, linestyle=linestyle,
-                          edgecolor=edgecolor, fc='none', lw=3, label=label, alpha=alpha)
+        ellipse = Ellipse(
+            xy=mu, width=width, height=height, angle=angle,
+            linestyle=linestyle,
+            edgecolor=edgecolor, fc='none', lw=3, label=label, alpha=alpha
+        )
         ax.add_patch(ellipse)
 
     ax.set_xlabel(f"Dimension {dim_x}", fontsize=18)
@@ -370,6 +397,7 @@ def plot_learned_gaussians(data, model, dim_x, dim_y, output_filename, conf_leve
     plt.tight_layout()
     plt.savefig(output_filename)
     plt.close(fig)
+
 
 def visualize_bins_2d(data_dict, var_label, n_bins, path_plot):
     """
@@ -387,11 +415,11 @@ def visualize_bins_2d(data_dict, var_label, n_bins, path_plot):
             all_scores.append(arr)
             all_bins.append(bins)
         scores = np.vstack(all_scores)
-        bins   = np.concatenate(all_bins)
+        bins = np.concatenate(all_bins)
 
         cmap = plt.cm.get_cmap('tab20', n_bins)
         fig, ax = plt.subplots(figsize=(8,6))
-        sc = ax.scatter(
+        ax.scatter(
             scores[:, dims[0]], scores[:, dims[1]],
             c=bins, cmap=cmap, vmin=0, vmax=n_bins-1,
             s=10, alpha=0.2
@@ -399,15 +427,17 @@ def visualize_bins_2d(data_dict, var_label, n_bins, path_plot):
 
         # legend proxies
         proxies = [Patch(color=cmap(k), label=f'Bin {k}') for k in range(n_bins)]
-        ax.legend(fontsize=14, handles=proxies, ncol=2, labelspacing=0.2, columnspacing=0.5)
+        ax.legend(
+            fontsize=14, handles=proxies, ncol=2, labelspacing=0.2, columnspacing=0.5
+        )
 
         ax.set_xlabel(f"Discriminant node {dims[0]}")
         ax.set_ylabel(f"Discriminant node {dims[1]}")
-        #ax.set_title(f"Bins by assigned index (dims={dims})")
 
         fig.tight_layout()
         fig.savefig(path_plot.replace(".pdf", f"_{dims[0]}_{dims[1]}.pdf"))
         fig.clf()
+
 
 def get_distinct_colors(n):
     """
@@ -419,7 +449,10 @@ def get_distinct_colors(n):
     # hsv is RGBA; drop the alpha channel
     return [tuple(rgb[:3]) for rgb in hsv]
 
-def plot_bin_boundaries_simplex(model, bin_order, path_plot, reduce=False, resolution=1000):
+
+def plot_bin_boundaries_simplex(
+    model, bin_order, path_plot, reduce=False, resolution=1000
+):
     """
     For each pair of score dims (i,j), slice the 3-simplex,
     assign each point to the highest-density GMM component, and
@@ -433,17 +466,17 @@ def plot_bin_boundaries_simplex(model, bin_order, path_plot, reduce=False, resol
 
     # 1) Build color list from current cycle + tab colors
     base = plt.rcParams['axes.prop_cycle'].by_key()['color']
-    tab  = ["tab:olive", "tab:cyan", "tab:green", "tab:pink", "tab:brown", "black"]
+    tab = ["tab:olive", "tab:cyan", "tab:green", "tab:pink", "tab:brown", "black"]
     needed = model.n_cats - (len(base) + len(tab))
-    extra  = [] if needed < 1 else get_distinct_colors(needed)
+    extra = [] if needed < 1 else get_distinct_colors(needed)
     colors = (base + tab + extra)[:model.n_cats]
 
-    cmap  = ListedColormap(colors)
+    cmap = ListedColormap(colors)
     bounds = np.arange(model.n_cats+1) - 0.5
-    norm   = BoundaryNorm(bounds, model.n_cats)
+    norm = BoundaryNorm(bounds, model.n_cats)
 
     # 2) Extract GMM params
-    logits  = model.mixture_logits.numpy()[bin_order]
+    logits = model.mixture_logits.numpy()[bin_order]
     weights = np.exp(logits - logits.max())
     weights /= weights.sum()
 
@@ -453,7 +486,9 @@ def plot_bin_boundaries_simplex(model, bin_order, path_plot, reduce=False, resol
     # elif sigmoid:
     #     mus = tf.math.sigmoid(raw_means).numpy()
     if reduce:
-        zeros = tf.zeros((tf.shape(raw_means)[0], 1), dtype=raw_means.dtype)  # (n_cats,1)
+        zeros = tf.zeros(
+            (tf.shape(raw_means)[0], 1), dtype=raw_means.dtype
+        )  # (n_cats,1)
         full_logits = tf.concat([raw_means, zeros], axis=1)  # (n_cats, 3)
         probs = tf.nn.softmax(full_logits, axis=1).numpy()  # (n_cats,3)
         # take first two coords as 2D location
@@ -462,7 +497,7 @@ def plot_bin_boundaries_simplex(model, bin_order, path_plot, reduce=False, resol
         mus = tf.nn.softmax(raw_means, axis=1).numpy()
 
     scales = model.get_scale_tril().numpy()[bin_order]
-    covs   = np.einsum('kij,kpj->kip', scales, scales)
+    covs = np.einsum('kij,kpj->kip', scales, scales)
 
     # 3) Loop over 2D faces
     for (i,j) in [(0,1),(0,2),(1,2)]:
@@ -471,7 +506,7 @@ def plot_bin_boundaries_simplex(model, bin_order, path_plot, reduce=False, resol
         xs = np.linspace(0,1,resolution)
         ys = np.linspace(0,1,resolution)
         X, Y = np.meshgrid(xs, ys)
-        mask  = (X+Y <= 1.0)
+        mask = (X+Y <= 1.0)
 
         pts = np.zeros((mask.sum(),3))
         pts[:,i] = X[mask]
@@ -484,7 +519,6 @@ def plot_bin_boundaries_simplex(model, bin_order, path_plot, reduce=False, resol
         # compute log density + log weight
         logps = np.zeros((pts.shape[0], model.n_cats))
         for idx in range(model.n_cats):
-            print("mean=mus[idx], cov=covs[idx]", mus[idx], covs[idx])
             rv = multivariate_normal(mean=mus[idx], cov=covs[idx], allow_singular=True)
             logps[:,idx] = np.log(weights[idx]+1e-12) + rv.logpdf(pts)
 
@@ -495,19 +529,21 @@ def plot_bin_boundaries_simplex(model, bin_order, path_plot, reduce=False, resol
         # plotting
         fig, ax = plt.subplots(figsize=(8,6))
         ax.contourf(X, Y, assign, levels=bounds, cmap=cmap, norm=norm, alpha=0.6)
-        ax.contour (X, Y, assign, levels=bounds, colors='k', linewidths=0.8)
+        ax.contour(X, Y, assign, levels=bounds, colors='k', linewidths=0.8)
 
         # bin labels
         for b in range(model.n_cats):
-            xi = X[assign==b]
-            yi = Y[assign==b]
+            xi = X[assign == b]
+            yi = Y[assign == b]
             if xi.size:
                 ax.text(xi.mean(), yi.mean(), str(b),
                         color=colors[b], fontsize=16,
                         fontweight='bold', ha='center', va='center')
 
         # legend
-        proxies = [plt.Rectangle((0,0),1,1, color=colors[b]) for b in range(model.n_cats)]
+        proxies = [
+            plt.Rectangle((0,0),1,1, color=colors[b]) for b in range(model.n_cats)
+        ]
         ax.legend(proxies, [f"Bin {b}" for b in range(model.n_cats)],
                   ncol=2, fontsize=16, loc='upper right')
 
@@ -519,6 +555,7 @@ def plot_bin_boundaries_simplex(model, bin_order, path_plot, reduce=False, resol
         plt.tight_layout()
         fig.savefig(path_plot.replace(".pdf", f"_dims_{i}_{j}.pdf"))
         plt.close(fig)
+
 
 def plot_yield_vs_uncertainty(
         B_sorted,
@@ -536,15 +573,15 @@ def plot_yield_vs_uncertainty(
         • left axis  (color C0) shows B
         • right axis (color C1) shows sigma/B
     """
-    B_sorted       = np.asarray(B_sorted)
+    B_sorted = np.asarray(B_sorted)
     rel_unc_sorted = np.asarray(rel_unc_sorted)
-    bins           = np.arange(len(B_sorted))
-    width          = 0.4             # bar width
-    fontsize       = 22
+    bins = np.arange(len(B_sorted))
+    width = 0.4             # bar width
+    fontsize = 22
 
     # default styles
-    left_style  = dict(alpha=0.6, color="C0", width=width)
-    right_style = dict(alpha=0.6, color="C1", width=width)
+    left_style = {"alpha": 0.6, "color": "C0", "width": width}
+    right_style = {"alpha": 0.6, "color": "C1", "width": width}
 
     if bar_kwargs_left:
         left_style.update(bar_kwargs_left)
@@ -569,13 +606,11 @@ def plot_yield_vs_uncertainty(
     ax2.tick_params(axis="y", colors=right_style["color"])
     ax2.spines["right"].set_color(right_style["color"])
 
-
     ax1.set_xlabel(x_label, fontsize=fontsize)
     ax1.set_xticks(bins)
     fig.tight_layout()
     fig.savefig(output_filename)
     plt.close(fig)
-    print(f"INFO: figure {output_filename} was created.")
 
 
 def plot_significance_comparison(
@@ -598,16 +633,16 @@ def plot_significance_comparison(
     fig, ax = plt.subplots(figsize=fig_size)
 
     # pick distinct markers for baseline vs. optimized:
-    base_style = dict(marker='o', linestyle='-')
-    opt_style  = dict(marker='s', linestyle='--')
+    base_style = {"marker": 'o', "linestyle": '-'}
+    opt_style = {"marker": 's', "linestyle": '--'}
 
     for sig in baseline_results:
         # get sorted bins & values
         b_bins = np.array(sorted(baseline_results[sig].keys()))
-        b_Z    = np.array([baseline_results[sig][nb] for nb in b_bins])
+        b_Z = np.array([baseline_results[sig][nb] for nb in b_bins])
 
         o_bins = np.array(sorted(optimized_results[sig].keys()))
-        o_Z    = np.array([optimized_results[sig][nb] for nb in o_bins])
+        o_Z = np.array([optimized_results[sig][nb] for nb in o_bins])
 
         ax.plot(b_bins, b_Z, label=f"Equidistant binning {sig}", **base_style)
         ax.plot(o_bins, o_Z, label=f"GATO binning {sig}", **opt_style)
@@ -622,13 +657,14 @@ def plot_significance_comparison(
     fig.savefig(output_filename)
     plt.close(fig)
 
+
 def plot_gmm_1d(model,
                 output_filename,
                 x_range=(0.0, 1.0),
                 n_points=10000):
     """
     Plot the 1D GMM learned by `model`: each component's weighted PDF.
-    
+
     Args
     ----
     model           : a trained GMM model with dim=1
@@ -638,34 +674,35 @@ def plot_gmm_1d(model,
     """
     # 1) build x grid
     x = np.linspace(x_range[0], x_range[1], n_points)
-    
+
     # 2) extract params
     eff = model.get_effective_parameters()
     weights = np.array(eff["mixture_weights"])    # (K,)
     raw_means = np.array(eff["means"])            # (K,1)
     scales = np.array(eff["scale_tril"])[:,0,0]    # (K,)
-    
+
     # 3) activate means into [0,1]
     mus = expit(raw_means.flatten())
-    
+
     # 4) pick colors
     base = plt.rcParams['axes.prop_cycle'].by_key()['color']
-    tab  = ["tab:olive","tab:cyan","tab:green","tab:pink","tab:brown","black"]
+    tab = ["tab:olive","tab:cyan","tab:green","tab:pink","tab:brown","black"]
     needed = model.n_cats - (len(base) + len(tab))
     extra = [] if needed < 1 else get_distinct_colors(needed)
     colors = (base + tab + extra)[:model.n_cats]
-    
+
     # 5) plot each component
     fig, ax = plt.subplots(figsize=(8,6))
     for i, (w, mu, sigma, c) in enumerate(zip(weights, mus, scales, colors)):
         pdf = w * norm.pdf(x, loc=mu, scale=sigma)
         ax.plot(x, pdf, color=c, linewidth=3, label=f"Comp. {i}")
-    
+
     ax.set_xlim(*x_range)
     ax.set_ylim(0, 1.2*ax.get_ylim()[1])
     ax.set_xlabel("x", fontsize=22)
     ax.set_ylabel("Weighted PDF", fontsize=22)
-    ax.legend(loc="upper right", fontsize=16, ncol=3, 
+    ax.legend(
+        loc="upper right", fontsize=16, ncol=3,
         labelspacing=0.2,     # vertical space between entries
         columnspacing=0.4,    # horizontal space between columns
         handlelength=1.0      # length of the legend lines
