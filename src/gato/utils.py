@@ -27,6 +27,34 @@ def create_hist(data, weights=None, bins=50, low=0.0, high=1.0, name="NN_output"
         h.fill(data)
     return h
 
+def safe_sigmoid(z, steepness):
+    z_clipped = tf.clip_by_value(-steepness * z, -75.0, 75.0)
+    return 1.0 / (1.0 + tf.exp(z_clipped))
+
+def asymptotic_significance(S, B, eps=1e-9):
+    """
+    Default asymptotic significance function with S/sqrt(B) approximation at very low S/B.
+    """
+    safe_B = tf.maximum(B, eps)
+    ratio = S / safe_B
+    # Full Asimov formula:
+    Z_asimov = tf.sqrt(2.0 * ((S + safe_B)*tf.math.log(1.0 + ratio) - S))
+    # S/sqrt(B) approximation for small S/B:
+    Z_approx = S / tf.sqrt(safe_B)
+    # Switch where ratio < 0.1
+    return tf.where(ratio < 0.1, Z_approx, Z_asimov)
+
+def compute_significance_from_hists(h_signal, h_bkg_list):
+    # Sum background counts bin-by-bin.
+    B_vals = sum([h_bkg.values() for h_bkg in h_bkg_list])
+    S_vals = h_signal.values()
+    S_tensor = tf.constant(S_vals, dtype=tf.float32)
+    B_tensor = tf.constant(B_vals, dtype=tf.float32)
+    Z_bins = asymptotic_significance(S_tensor, B_tensor)
+    Z_overall = np.sqrt(np.sum(Z_bins.numpy()**2))
+    return Z_overall
+
+
 def align_boundary_tracks(history, dist_tol=0.02, gap_max=20):
     """
     history : list of lists, each inner list = boundaries at that epoch

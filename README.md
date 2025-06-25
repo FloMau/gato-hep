@@ -1,32 +1,74 @@
-# GATO: Gradient-based cATegorization Optimizer
+GATO – Gradient-based cATegorization Optimizer
+==============================================
 
-This repository contains a framework for optimizing analysis categorisation boundaries in a differentiable way using TensorFlow.
-It is designed to be both general and configurable, and can be adapted for specific HEP analyses.
-## Project Structure
+A toolkit for binning / categorisation optimisation with respect to signal 
+significance for HEP analyses, using gradient-descent methods.
+GATO relies on TensorFlow with TensorFlow-Probability.
 
-- `diffcat_optimizer/`: Contains the core Python modules.
-- `examples/`: Examples how to use the package
-- `requirements.txt`: Lists the required Python packages. (Not yet, you need an env with TensorFlow 2, hist, numpy, pandas, mplhep)
+The categorisation can be performed directly in a multidimensional discriminant 
+space, e.g. from a mutliclassifier with softmax activation.
+The bins are defined by learnable multidimensional Gaussians as a Gaussian Mixture Model (GMM), or, well working in 1D, using bin boundaries approximated by steep sigmoid functions of learnable position. 
 
-## Getting Started
+--------------------------------------------------------------------
+Quick install (editable mode)
+--------------------------------------------------------------------
+git clone https://github.com/FloMau/gato.git
+cd gato
+python3 -m venv gato_env       # or use conda
+source gato_env/bin/activate
+pip install -e .               # reads pyproject.toml
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/FloMau/gato.git
+Dependencies declared in *pyproject.toml*. The only tricky part is to find matching versions of tensorflow, tensorflow-probability and ml-dtypes.
 
-## Run examples
-### 1D signal-vs.background toy example
-This example represents a generic HEP analysis with a signal process and multiple backgrounds with a one-dimensional discriminant.
-We obtain the discriminant based on random numbers following exponential PDFs, which represents a discriminant that could be obtained from multivariate classifiers.
-It will compare the significance obtained from equidistant binning with the GATO-optimized binning for different numbers of bins.
+--------------------------------------------------------------------
+Running the toy examples
+--------------------------------------------------------------------
+# 1D toy (signal vs. multi-background)
+python examples/1D_example/run_toy_example.py
 
-A minimum of `N` events can be required in the GATO binning. Here, `N=10` background events are used as default.
-This is implemented with a differentiable penalty added to the loss.
+# 3-class soft-max (2 D slice of 3 D)
+python examples/three_class_softmax_example/run_example.py
 
-Run it via: 
+Each script writes plots & a significance comparison table.
+
+--------------------------------------------------------------------
+Using the library in your code
+--------------------------------------------------------------------
+The code can be accessed as `import gato`
+``` python
+# standard GMM model for ND optimisation
+from gato.models import gato_gmm_model
+# more to be included here later on
+
+# see ./examples for a full workflow!
 ```
-python examples/toy_example/run_toy_example.py
+
+--------------------------------------------------------------------
+Directory layout
+--------------------------------------------------------------------
+```
+gato/                       project root
+│
+├─ pyproject.toml           metadata + dependencies
+├─ src/gato/                installable Python package
+│   │
+│   ├─ __init__.py
+│   ├─ models.py            Trainable model class
+│   └─ losses.py            custom loss / penalty terms
+│   ├─ utils.py             misc helpers
+│   ├─ plotting_utils.py    helper plots (stacked hists, bin boundaries, ...)
+│   ├─ data_generation.py   toy data generators (1D / 3-class softmax)
+│
+└─ examples/                runnable demos
+    ├─ 1D_example/run_example.py
+    └─ three_class_softmax_example/run_example.py
 ```
 
-### Further examples
-To be included soon
+--------------------------------------------------------------------
+Contributing
+--------------------------------------------------------------------
+1. `git checkout -b feature/xyz`
+2. Code under *src/gato/*, add tests under *tests/*.
+3. Update version in *pyproject.toml*.
+4. `black` / `isort` / `pytest`, then open a PR.
+
