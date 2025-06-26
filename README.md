@@ -12,13 +12,16 @@ The bins are defined by learnable multidimensional Gaussians as a Gaussian Mixtu
 --------------------------------------------------------------------
 Quick install (editable mode)
 --------------------------------------------------------------------
+```bash
 git clone https://github.com/FloMau/gato.git
 cd gato
 python3 -m venv gato_env       # or use conda
 source gato_env/bin/activate
-pip install -e .               # reads pyproject.toml
+pip install -e .
+```
 
-Dependencies declared in *pyproject.toml*. The only tricky part is to find matching versions of tensorflow, tensorflow-probability and ml-dtypes.
+Dependencies are declared in *pyproject.toml*. 
+Note: The only tricky part is to find matching versions of tensorflow, tensorflow-probability and ml-dtypes. The requirements mentioned here should work, however, other combinations may work as well.
 
 --------------------------------------------------------------------
 Running the toy examples
