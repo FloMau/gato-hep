@@ -116,7 +116,6 @@ class GATO_2D(gato_gmm_model):
         Z1 = tf.sqrt(tf.reduce_sum(asymptotic_significance(sig1_y, bkg_y + sig2_y)**2))
         Z2 = tf.sqrt(tf.reduce_sum(asymptotic_significance(sig2_y, bkg_y + sig1_y)**2))
         loss = -tf.sqrt(Z1 * Z2)
-        tf.print(loss)
         return loss, bkg_y, bkg_w2
 
 
@@ -133,7 +132,7 @@ def main():
     parser.add_argument("--out",         type=str,   default="Plots")
     args = parser.parse_args()
 
-    path_plots = f'./examples/three_class_softmax/{args.out}/'
+    path_plots = f'./examples/three_class_softmax_example/{args.out}/'
     os.makedirs(path_plots, exist_ok=True)
 
     # ---------- toy data
