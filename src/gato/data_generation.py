@@ -8,7 +8,23 @@ tfd = tfp.distributions
 
 def sample_gaussian(n_events, mean, cov, seed=None):
     """
-    Draw n_events from N(mean, cov) in ℝ³.
+    Draw samples from a multivariate Gaussian distribution.
+
+    Parameters
+    ----------
+    n_events : int
+        Number of events (samples) to draw.
+    mean : array_like
+        Mean vector of the Gaussian distribution.
+    cov : array_like
+        Covariance matrix of the Gaussian distribution.
+    seed : int or None, optional
+        Seed for the random number generator. Default is None.
+
+    Returns
+    -------
+    ndarray
+        Samples drawn from the Gaussian distribution with shape (n_events, len(mean)).
     """
     rng = np.random.default_rng(seed)
     return rng.multivariate_normal(mean, cov, size=n_events)
@@ -20,9 +36,32 @@ def generate_toy_data_1D(
     lumi=100, seed=None
 ):
     """
-    3D Gaussian toy: sample points for signal & 3 bkgs, then compute
-    the likelihood-ratio discriminant (sig vs sum of bkgs), mapped to [0,1].
-    Returns dict of DataFrames with columns “NN_output” and “weight”.
+    Generate 1D toy data for signal and background events.
+
+    Parameters
+    ----------
+    n_signal : int, optional
+        Number of signal events to generate. Default is 100000.
+    n_bkg : int, optional
+        Number of background events to generate. Default is 300000.
+    xs_signal : float, optional
+        Cross-section for signal events. Default is 0.5.
+    xs_bkg1 : float, optional
+        Cross-section for the first background component. Default is 50.
+    xs_bkg2 : float, optional
+        Cross-section for the second background component. Default is 15.
+    xs_bkg3 : float, optional
+        Cross-section for the third background component. Default is 10.
+    lumi : float, optional
+        Luminosity for scaling event weights. Default is 100.
+    seed : int or None, optional
+        Seed for the random number generator. Default is None.
+
+    Returns
+    -------
+    dict of pandas.DataFrame
+        A dictionary of DataFrames, each containing the generated toy data
+        with columns "NN_output" and "weight".
     """
     if seed is not None:
         np.random.seed(seed)
