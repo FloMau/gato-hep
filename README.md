@@ -24,18 +24,22 @@ Dependencies are declared in *pyproject.toml*.
 Note: The only tricky part is to find matching versions of tensorflow, tensorflow-probability and ml-dtypes. The requirements mentioned here should work, however, other combinations may work as well.
 
 --------------------------------------------------------------------
-Running the toy examples
+## Running the toy examples
 --------------------------------------------------------------------
-# 1D toy (signal vs. multi-background)
+### 1D toy (signal vs. multi-background)
+```python
 python examples/1D_example/run_toy_example.py
+```
 
-# 3-class soft-max (2 D slice of 3 D)
+### 3-class soft-max (2 D slice of 3 D)
+```python
 python examples/three_class_softmax_example/run_example.py
+```
 
 Each script writes plots & a significance comparison table.
 
 --------------------------------------------------------------------
-Apply GATO to your own data
+## Apply GATO to your own data
 --------------------------------------------------------------------
 ``` python
 # standard GMM model for ND optimisation
@@ -46,7 +50,7 @@ from gato.models import gato_gmm_model
 ```
 
 --------------------------------------------------------------------
-Directory layout
+## Directory layout
 --------------------------------------------------------------------
 ```
 gato/                       project root
@@ -67,7 +71,7 @@ gato/                       project root
 ```
 
 --------------------------------------------------------------------
-Contributing
+## Contributing
 --------------------------------------------------------------------
 1. `git checkout -b feature/xyz`
 2. Code under *src/gato/*, add tests under *tests/*.
