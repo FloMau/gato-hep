@@ -62,7 +62,6 @@ def convert_data_to_tensors(data):
 #  2-D GMM gato model
 class GATO_2D(gato_gmm_model):
     def __init__(self, n_cats, temperature=0.3, name="GATO_2D"):
-        # ---> tell the base class we work in 2 dimensions
         super().__init__(n_cats=n_cats,
                          dim=2,
                          temperature=temperature,

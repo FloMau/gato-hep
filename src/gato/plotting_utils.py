@@ -1,5 +1,4 @@
 import os
-
 import hist
 import matplotlib.pyplot as plt
 import mplhep as hep
@@ -16,12 +15,12 @@ tfd = tfp.distributions
 
 
 def plot_stacked_histograms(
-    stacked_hists,           # list of hist.hist objects for backgrounds
-    process_labels,          # list of labels for backgrounds
+    stacked_hists,
+    process_labels,
     output_filename="./plot.pdf",
     axis_labels=("x-axis", "Events"),
-    signal_hists=None,       # optional list of hist.hist objects for signals
-    signal_labels=None,      # optional labels for signal histograms
+    signal_hists=None,
+    signal_labels=None,
     normalize=False,
     log=False,
     log_min=None,
@@ -29,23 +28,38 @@ def plot_stacked_histograms(
     ax=None,
 ):
     """
-    Plots stacked histograms for backgrounds and overlays signal histograms.
-    This is a simplified version that drops ratio panels, data hist, and CMS labels.
+    Plot stacked histograms for backgrounds and overlay signal histograms.
 
-    Parameters:
-      - stacked_hists: list of hist.hist objects (backgrounds).
-      - process_labels: list of strings for background process names.
-      - output_filename: file name to save the figure.
-      - axis_labels: tuple with (x-axis label, y-axis label).
-      - signal_hists: list of hist.hist objects for signals (optional).
-      - signal_labels: list of labels for signal histograms (optional).
-      - normalize: if True, normalize the histograms.
-      - log: if True, use log scale on the y-axis.
-      - log_min: if provided, set the y-axis lower limit.
-      - return_figure: if True, return (fig, ax) instead of saving.
-      - ax: if provided, plot on the given axes.
+    Parameters
+    ----------
+    stacked_hists : list of hist.Hist
+        List of histograms for background processes.
+    process_labels : list of str
+        List of labels for background processes.
+    output_filename : str, optional
+        File name to save the figure. Default is "./plot.pdf".
+    axis_labels : tuple of str, optional
+        Labels for the x-axis and y-axis. Default is ("x-axis", "Events").
+    signal_hists : list of hist.Hist, optional
+        List of histograms for signal processes. Default is None.
+    signal_labels : list of str, optional
+        List of labels for signal histograms. Default is None.
+    normalize : bool, optional
+        If True, normalize the histograms. Default is False.
+    log : bool, optional
+        If True, use a logarithmic scale for the y-axis. Default is False.
+    log_min : float, optional
+        Minimum value for the y-axis in log scale. Default is None.
+    return_figure : bool, optional
+        If True, return the figure and axis instead of saving. Default is False.
+    ax : matplotlib.axes.Axes, optional
+        Axis to plot on. Default is None.
+
+    Returns
+    -------
+    None or tuple
+        If `return_figure` is True, returns (fig, ax). Otherwise, saves the plot.
     """
-
     # Normalization if requested.
     if normalize:
         stack_integral = sum([_hist.sum().value for _hist in stacked_hists])
@@ -57,7 +71,6 @@ def plot_stacked_histograms(
                     signal_hists[i] = sig / integral_
 
     # Prepare binning from the first histogram.
-    # We assume that each hist has one axis and use its bin edges.
     bin_edges = stacked_hists[0].to_numpy()[1]
 
     # Gather values and uncertainties for each background histogram.
@@ -149,23 +162,57 @@ def plot_stacked_histograms(
     return None
 
 
-def plot_history(history_data, output_filename,
-                 y_label="Value", x_label="Epoch",
-                 boundaries=False, title=None, log_scale=False):
+def plot_history(
+    history_data,
+    output_filename,
+    y_label="Value",
+    x_label="Epoch",
+    boundaries=False,
+    title=None,
+    log_scale=False,
+):
+    """
+    Plot the training history of a model.
 
+    Parameters
+    ----------
+    history_data : list or ndarray
+        History data to plot.
+    output_filename : str
+        File name to save the plot.
+    y_label : str, optional
+        Label for the y-axis. Default is "Value".
+    x_label : str, optional
+        Label for the x-axis. Default is "Epoch".
+    boundaries : bool, optional
+        If True, plot boundaries instead of scalar values. Default is False.
+    title : str, optional
+        Title of the plot. Default is None.
+    log_scale : bool, optional
+        If True, use a logarithmic scale for the y-axis. Default is False.
+
+    Returns
+    -------
+    None
+    """
     epochs = np.arange(len(history_data))
     fig, ax = plt.subplots(figsize=(8, 6))
 
-    if not boundaries:                        # scalar history
+    if not boundaries:  # scalar history
         ax.plot(epochs, history_data, marker="o")
-    else:                                     # matrix  (epochs, n_tracks)
+    else:  # matrix (epochs, n_tracks)
         values = np.asarray(history_data, dtype=float)
         n_trk = values.shape[1]
         cmap = plt.get_cmap("tab20", n_trk)
         for t in range(n_trk):
-            ax.plot(epochs, values[:, t],
-                    marker="o", markersize=3,
-                    color=cmap(t), label=f"Boundary {t+1}")
+            ax.plot(
+                epochs,
+                values[:, t],
+                marker="o",
+                markersize=3,
+                color=cmap(t),
+                label=f"Boundary {t+1}",
+            )
 
     ax.set_xlabel(x_label, fontsize=22)
     ax.set_ylabel(y_label, fontsize=22)
@@ -190,26 +237,30 @@ def plot_history(history_data, output_filename,
 
 def assign_bins_and_order(model, data, reduce=False, eps=1e-6):
     """
-    Given a trained multidimensional cut model and a data dictionary,
-    compute for each event the hard assignment
-    (using argmax over joint log-probabilities),
-    accumulate yields to compute a significance measure per bin,
-    and then re-map the original bin indices to new indices so that the
-    most significant bin gets the highest new index.
+    Assign events to bins and compute bin significance.
 
-    Returns:
-      bin_assignments: dict mapping process name ->
-      array of new bin indices for each event.
-      order: sorted array of original bin indices (ascending significance).
-      sb_ratios: array of significance (S/sqrt(B)) for each original bin.
-      inv_mapping: dictionary mapping new bin index -> original bin index.
+    Parameters
+    ----------
+    model : tf.Module
+        Trained model with Gaussian components.
+    data : dict
+        Dictionary of input data with process names as keys.
+    reduce : bool, optional
+        If True, reduce dimensionality. Default is False.
+    eps : float, optional
+        Small value to avoid division by zero. Default is 1e-6.
+
+    Returns
+    -------
+    tuple
+        A tuple containing bin assignments, bin order, significances, and inverse mapping.
     """
     n_cats = model.n_cats
 
     # Retrieve learned parameters.
     log_mix = tf.nn.log_softmax(model.mixture_logits)  # shape: (n_cats,)
-    scale_tril = model.get_scale_tril()                 # shape: (n_cats, dim, dim)
-    means = model.means                                 # shape: (n_cats, dim)
+    scale_tril = model.get_scale_tril()  # shape: (n_cats, dim, dim)
+    means = model.means  # shape: (n_cats, dim)
 
     if reduce:
         zeros = tf.zeros((tf.shape(means)[0], 1), dtype=means.dtype)
@@ -261,7 +312,7 @@ def assign_bins_and_order(model, data, reduce=False, eps=1e-6):
     # Compute a significance measure per bin. (Here we use S/sqrt(B))
     significances = S_yields / (np.sqrt(B_yields) + eps)
 
-    # order: sort original bin indices in ascending order (lowest significance first)
+    # Order: sort original bin indices in ascending order (lowest significance first)
     order = np.argsort(significances)  # e.g., [orig_bin_low, ..., orig_bin_high]
     new_order_mapping = {orig: new for new, orig in enumerate(order)}
     # And the inverse mapping: new index -> original index.
@@ -270,17 +321,30 @@ def assign_bins_and_order(model, data, reduce=False, eps=1e-6):
     # Remap bin assignments.
     for proc in bin_assignments:
         orig_assign = bin_assignments[proc]
-        bin_assignments[proc] = np.vectorize(
-            lambda i: new_order_mapping[i]
-        )(orig_assign)
+        bin_assignments[proc] = np.vectorize(lambda i: new_order_mapping[i])(orig_assign)
 
     return bin_assignments, order, significances, inv_mapping
 
 
 def fill_histogram_from_assignments(assignments, weights, nbins, name="BinAssignments"):
     """
-    Given an array of integer assignments (one per event) and corresponding weights,
-    fill a histogram with bins [0, nbins] using the hist library.
+    Fill a histogram from event assignments and weights.
+
+    Parameters
+    ----------
+    assignments : array_like
+        Array of bin assignments for each event.
+    weights : array_like
+        Array of weights for each event.
+    nbins : int
+        Number of bins in the histogram.
+    name : str, optional
+        Name of the histogram axis. Default is "BinAssignments".
+
+    Returns
+    -------
+    hist.Hist
+        A histogram object.
     """
     # Create a histogram with nbins bins, ranging from 0 to nbins.
     h = hist.Hist.new.Reg(nbins, 0, nbins, name=name).Weight()
@@ -301,14 +365,28 @@ def plot_learned_gaussians(
     """
     Plot the learned Gaussian components (projected to two dimensions) and the data.
 
-    Parameters:
-      data: dict mapping process name -> DataFrame with column "NN_output" (array-like).
-      model: trained multidimensional model with get_effective_parameters().
-      dim_x, dim_y: dimensions to plot.
-      output_filename: where to save the plot.
-      conf_level: chi-square threshold for 1 sigma ellipse.
-      inv_mapping: dict mapping new bin index -> original Gaussian index.
-                   If None, defaults to identity.
+    Parameters
+    ----------
+    data : dict
+        Dictionary mapping process names to DataFrames with column "NN_output".
+    model : tf.Module
+        Trained multidimensional model with `get_effective_parameters()`.
+    dim_x : int
+        Dimension to plot on the x-axis.
+    dim_y : int
+        Dimension to plot on the y-axis.
+    output_filename : str
+        File name to save the plot.
+    conf_level : float, optional
+        Chi-square threshold for 1-sigma ellipse. Default is 2.30.
+    inv_mapping : dict, optional
+        Mapping from new bin index to original Gaussian index. Default is None.
+    reduce : bool, optional
+        If True, reduce dimensionality. Default is False.
+
+    Returns
+    -------
+    None
     """
     eff_params = model.get_effective_parameters()
     means = np.array(eff_params["means"])    # shape: (n_cats, dim)
@@ -401,12 +479,26 @@ def plot_learned_gaussians(
 
 def visualize_bins_2d(data_dict, var_label, n_bins, path_plot):
     """
-    2D scatter of all points colored by their assigned 'bin_index'.
-    Uses the 'bin_index' column and fixed colormap.
+    Visualize 2D scatter plots of points colored by bin assignments.
+
+    Parameters
+    ----------
+    data_dict : dict
+        Dictionary of input data with process names as keys.
+    var_label : str
+        Label for the variable to plot.
+    n_bins : int
+        Number of bins.
+    path_plot : str
+        File path to save the plot.
+
+    Returns
+    -------
+    None
     """
-    dims_list = [(0,1), (0,2), (1,2)]
+    dims_list = [(0, 1), (0, 2), (1, 2)]
     for dims in dims_list:
-        # gather all scores and bin indices
+        # Gather all scores and bin indices
         all_scores = []
         all_bins = []
         for df in data_dict.values():
@@ -418,14 +510,14 @@ def visualize_bins_2d(data_dict, var_label, n_bins, path_plot):
         bins = np.concatenate(all_bins)
 
         cmap = plt.cm.get_cmap('tab20', n_bins)
-        fig, ax = plt.subplots(figsize=(8,6))
+        fig, ax = plt.subplots(figsize=(8, 6))
         ax.scatter(
             scores[:, dims[0]], scores[:, dims[1]],
-            c=bins, cmap=cmap, vmin=0, vmax=n_bins-1,
+            c=bins, cmap=cmap, vmin=0, vmax=n_bins - 1,
             s=10, alpha=0.2
         )
 
-        # legend proxies
+        # Legend proxies
         proxies = [Patch(color=cmap(k), label=f'Bin {k}') for k in range(n_bins)]
         ax.legend(
             fontsize=14, handles=proxies, ncol=2, labelspacing=0.2, columnspacing=0.5
@@ -441,12 +533,19 @@ def visualize_bins_2d(data_dict, var_label, n_bins, path_plot):
 
 def get_distinct_colors(n):
     """
-    Return a list of n distinct RGB colors by sampling the HSV
-    colormap evenly around the hue circle.
+    Generate a list of n distinct RGB colors.
+
+    Parameters
+    ----------
+    n : int
+        Number of distinct colors to generate.
+
+    Returns
+    -------
+    list of tuple
+        List of RGB color tuples.
     """
-    # np.linspace(0,1,n,endpoint=False) gives n hues around the circle
     hsv = plt.cm.hsv(np.linspace(0, 1, n, endpoint=False))
-    # hsv is RGBA; drop the alpha channel
     return [tuple(rgb[:3]) for rgb in hsv]
 
 
@@ -454,14 +553,25 @@ def plot_bin_boundaries_simplex(
     model, bin_order, path_plot, reduce=False, resolution=1000
 ):
     """
-    For each pair of score dims (i,j), slice the 3-simplex,
-    assign each point to the highest-density GMM component, and
-    draw filled regions + boundaries + bin labels.
+    Plot bin boundaries in a 3-simplex for a trained model.
 
-    Colors are taken from the current MPL cycle (e.g. mplhep) then
-    extended with the default 'tab:' colors if needed.
+    Parameters
+    ----------
+    model : tf.Module
+        Trained model with Gaussian components.
+    bin_order : list
+        Order of bins for plotting.
+    path_plot : str
+        File path to save the plot.
+    reduce : bool, optional
+        If True, reduce dimensionality. Default is False.
+    resolution : int, optional
+        Resolution of the plot grid. Default is 1000.
+
+    Returns
+    -------
+    None
     """
-
     os.makedirs(os.path.dirname(path_plot), exist_ok=True)
 
     # 1) Build color list from current cycle + tab colors
@@ -558,20 +668,46 @@ def plot_bin_boundaries_simplex(
 
 
 def plot_yield_vs_uncertainty(
-        B_sorted,
-        rel_unc_sorted,
-        output_filename,
-        log=False,
-        x_label="Bin index",
-        y_label_left="Background yield",
-        y_label_right="Rel. stat. unc.",
-        fig_size=(8, 6),
-        bar_kwargs_left=None,
-        bar_kwargs_right=None):
+    B_sorted,
+    rel_unc_sorted,
+    output_filename,
+    log=False,
+    x_label="Bin index",
+    y_label_left="Background yield",
+    y_label_right="Rel. stat. unc.",
+    fig_size=(8, 6),
+    bar_kwargs_left=None,
+    bar_kwargs_right=None,
+):
     """
-    Dual-axis bar plot with displaced bars:
-        • left axis  (color C0) shows B
-        • right axis (color C1) shows sigma/B
+    Plot background yield and relative uncertainty as dual-axis bar plots.
+
+    Parameters
+    ----------
+    B_sorted : array_like
+        Sorted background yields.
+    rel_unc_sorted : array_like
+        Sorted relative uncertainties.
+    output_filename : str
+        File name to save the plot.
+    log : bool, optional
+        If True, use a logarithmic scale for the y-axis. Default is False.
+    x_label : str, optional
+        Label for the x-axis. Default is "Bin index".
+    y_label_left : str, optional
+        Label for the left y-axis. Default is "Background yield".
+    y_label_right : str, optional
+        Label for the right y-axis. Default is "Rel. stat. unc.".
+    fig_size : tuple, optional
+        Size of the figure. Default is (8, 6).
+    bar_kwargs_left : dict, optional
+        Additional arguments for the left bar plot. Default is None.
+    bar_kwargs_right : dict, optional
+        Additional arguments for the right bar plot. Default is None.
+
+    Returns
+    -------
+    None
     """
     B_sorted = np.asarray(B_sorted)
     rel_unc_sorted = np.asarray(rel_unc_sorted)
@@ -614,21 +750,25 @@ def plot_yield_vs_uncertainty(
 
 
 def plot_significance_comparison(
-        baseline_results: dict,
-        optimized_results: dict,
-        output_filename: str,
-        fig_size=(8,6)):
+    baseline_results, optimized_results, output_filename, fig_size=(8, 6)
+):
     """
-    Plots baseline vs. optimized significance for one or more signals.
+    Plot baseline vs. optimized significance for multiple signals.
 
     Parameters
     ----------
     baseline_results : dict
-        Maps each signal name (str) to a dict {n_bins: Z_value, ...}
+        Dictionary mapping signal names to baseline significance results.
     optimized_results : dict
-        Same mapping for the GATO-optimized runs.
+        Dictionary mapping signal names to optimized significance results.
     output_filename : str
-        Where to save the figure.
+        File name to save the plot.
+    fig_size : tuple, optional
+        Size of the figure. Default is (8, 6).
+
+    Returns
+    -------
+    None
     """
     fig, ax = plt.subplots(figsize=fig_size)
 
@@ -658,19 +798,24 @@ def plot_significance_comparison(
     plt.close(fig)
 
 
-def plot_gmm_1d(model,
-                output_filename,
-                x_range=(0.0, 1.0),
-                n_points=10000):
+def plot_gmm_1d(model, output_filename, x_range=(0.0, 1.0), n_points=10000):
     """
-    Plot the 1D GMM learned by `model`: each component's weighted PDF.
+    Plot the 1D Gaussian Mixture Model (GMM) learned by the model.
 
-    Args
-    ----
-    model           : a trained GMM model with dim=1
-    output_filename : path to save the figure (.pdf/.png)
-    x_range         : (xmin, xmax) tuple over which to plot
-    n_points        : number of points in the x grid
+    Parameters
+    ----------
+    model : tf.Module
+        Trained GMM model with one-dimensional data.
+    output_filename : str
+        File name to save the plot.
+    x_range : tuple of float, optional
+        Range of x values to plot. Default is (0.0, 1.0).
+    n_points : int, optional
+        Number of points in the x grid. Default is 10000.
+
+    Returns
+    -------
+    None
     """
     # 1) build x grid
     x = np.linspace(x_range[0], x_range[1], n_points)

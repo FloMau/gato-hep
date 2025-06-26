@@ -12,31 +12,52 @@ class gato_gmm_model(tf.Module):
     """
     A differentiable category model based on a Gaussian mixture.
 
-    The model learns, for each of n_cats:
-      - mixture_logits (which give the mixing weights),
-      - mean vector (of dimension 'dim'),
-      - an unconstrained lower-triangular matrix that is transformed into a
+    The model learns, for each of `n_cats`:
+      - Mixture logits (which give the mixing weights),
+      - Mean vector (of dimension `dim`),
+      - An unconstrained lower-triangular matrix that is transformed into a
         positive-definite Cholesky factor for the covariance.
 
     The per-event soft membership is computed by evaluating the log pdf of each
     Gaussian at the event's feature vector and adding the log mixture weight.
     A temperatured softmax is then applied.
 
-    The call() method loops over processes in data_tensor (a dict of tf tensors
-    with columns "NN_output" (an array-like of shape [dim]) and "weight"),
-    computes soft memberships, accumulates yields, and returns the negative
-    overall significance as loss (plus background yields).
+    Attributes
+    ----------
+    n_cats : int
+        Number of categories (Gaussian components).
+    dim : int
+        Dimensionality of the feature space.
+    temperature : float
+        Temperature parameter for the softmax function.
+    mixture_logits : tf.Variable
+        Trainable logits for the mixture weights.
+    means : tf.Variable
+        Trainable mean vectors for each Gaussian component.
+    unconstrained_L : tf.Variable
+        Trainable unconstrained lower-triangular matrices for covariance factors.
     """
 
     def __init__(self, n_cats, dim, temperature=1.0, name="gato_gmm_model"):
-        super().__init__(
-            name=name
-        )
+        """
+        Initialize the Gaussian mixture model.
+
+        Parameters
+        ----------
+        n_cats : int
+            Number of categories (Gaussian components).
+        dim : int
+            Dimensionality of the feature space.
+        temperature : float, optional
+            Temperature parameter for the softmax function. Default is 1.0.
+        name : str, optional
+            Name of the model. Default is "gato_gmm_model".
+        """
+        super().__init__(name=name)
         self.n_cats = n_cats
         self.dim = dim
         self.temperature = temperature
 
-        # -- mixture logits and means as before --
         self.mixture_logits = tf.Variable(
             tf.random.normal([n_cats], stddev=0.1),
             trainable=True, name="mixture_logits"
@@ -46,22 +67,12 @@ class gato_gmm_model(tf.Module):
             trainable=True, name="means"
         )
 
-        # --------------------------------------------------------------------
-        # Intrinsic manifold dimension (softmax on dim coordinates -> simplex of dim-1)
         m = max(dim - 1, 1)
-
-        # Volume of the (m-simplex) { x_i>=0, sum x_i=1 } under the induced
-        #  Euclid metric: V_simplex = sqrt(dim) / ( (dim-1)!)
         V_simp = math.sqrt(dim) / math.factorial(dim - 1)
-
-        # Volume of the unit m-ball: V_ball = π^(m/2) / Γ(m/2 + 1)
         V_ball = math.pi ** (m / 2) / math.gamma(m / 2 + 1)
-
-        # Choose sigma_base so that K · (V_ball · sigma^m) = V_simp
         sigma_base = (V_simp / (n_cats * V_ball)) ** (1.0 / m)
         self._sigma_base = tf.constant(sigma_base, dtype=tf.float32)
 
-        # Initialize unconstrained_L = zeros (raw_diag=0, offdiag=0)
         init = np.zeros((n_cats, dim, dim), dtype=np.float32)
         self.unconstrained_L = tf.Variable(
             init, trainable=True, name="unconstrained_L"
@@ -69,27 +80,35 @@ class gato_gmm_model(tf.Module):
 
     def get_scale_tril(self):
         """
-        Return a (n_cats, dim, dim) tensor of lower-triangular scale-factors L_k
-        so that Sigma_k = L_k @ L_k^T:
+        Compute the lower-triangular scale factors for the covariance matrices.
 
-        -> diag(L_k) = sigma_base * exp(raw_diag)
-        -> off-diag(L_k) = 0.1 * raw_offdiag
+        Returns
+        -------
+        tf.Tensor
+            A tensor of shape (n_cats, dim, dim) representing the lower-triangular
+            scale factors for each Gaussian component.
         """
-        # isolate lower triangle
         L_raw = tf.linalg.band_part(self.unconstrained_L, -1, 0)
-
         off = L_raw - tf.linalg.diag(tf.linalg.diag_part(L_raw))
-        # damp off-diagonals
         off = 0.1 * off
-
-        # build positive diag via exp
-        raw_diag = tf.linalg.diag_part(L_raw)           # shape = (n_cats, dim)
-        sigma = self._sigma_base * tf.exp(raw_diag)  # same shape
-
-        # reassemble
+        raw_diag = tf.linalg.diag_part(L_raw)
+        sigma = self._sigma_base * tf.exp(raw_diag)
         return tf.linalg.set_diag(off, sigma)
 
     def call(self, data_dict):
+        """
+        Placeholder method for computing yields and loss.
+
+        Parameters
+        ----------
+        data_dict : dict
+            A dictionary of input data tensors.
+
+        Raises
+        ------
+        NotImplementedError
+            This method must be overridden in subclasses.
+        """
         raise NotImplementedError(
             "Base class: user must override the `call` method to define how yields are "
             "computed, to match the analysis specific needs! Examples are in /examples."
@@ -97,7 +116,12 @@ class gato_gmm_model(tf.Module):
 
     def get_effective_parameters(self):
         """
-        Returns the learned mixture weights, means, and covariance factors.
+        Retrieve the learned mixture weights, means, and covariance factors.
+
+        Returns
+        -------
+        dict
+            A dictionary containing the mixture weights, means, and scale factors.
         """
         return {
             "mixture_weights": tf.nn.softmax(self.mixture_logits).numpy().tolist(),
@@ -105,18 +129,24 @@ class gato_gmm_model(tf.Module):
             "scale_tril": self.get_scale_tril().numpy().tolist()
         }
 
-    def get_effective_boundaries_1d(
-        self,
-        n_steps: int = 100_000,
-        return_mapping: bool = False
-    ):
+    def get_effective_boundaries_1d(self, n_steps=100_000, return_mapping=False):
         """
-        Numerically find the (n_cats-1) crossing points in [0,1] where the most likely
-        Gaussian component switches, and compute the ordering of components
-        by where they dominate.
+        Numerically find the crossing points in [0,1] where the most likely
+        Gaussian component switches.
 
-        If return_mapping=True, also returns `order` such that
-        order[j] = original component index that occupies bin j.
+        Parameters
+        ----------
+        n_steps : int, optional
+            Number of steps for the numerical grid. Default is 100000.
+        return_mapping : bool, optional
+            Whether to return the component ordering. Default is False.
+
+        Returns
+        -------
+        list
+            A list of crossing points in [0,1].
+        list, optional
+            If `return_mapping` is True, also returns the component ordering.
         """
         # 1) fetch & activate parameters
         weight = tf.nn.softmax(self.mixture_logits).numpy()      # (n_cats,)
@@ -163,7 +193,12 @@ class gato_gmm_model(tf.Module):
 
     def save(self, path: str):
         """
-        Save just the model's trainable variables to `path/ckpt-<step>`.
+        Save the model's trainable variables to a checkpoint.
+
+        Parameters
+        ----------
+        path : str
+            Directory path to save the checkpoint.
         """
         checkpoint = tf.train.Checkpoint(model=self)
         manager = tf.train.CheckpointManager(checkpoint, directory=path, max_to_keep=3)
@@ -172,7 +207,12 @@ class gato_gmm_model(tf.Module):
 
     def restore(self, path: str):
         """
-        Restore the model's trainable variables from the latest checkpoint in `path`.
+        Restore the model's trainable variables from a checkpoint.
+
+        Parameters
+        ----------
+        path : str
+            Directory path to load the checkpoint from.
         """
         checkpoint = tf.train.Checkpoint(model=self)
         manager = tf.train.CheckpointManager(checkpoint, directory=path, max_to_keep=3)
@@ -182,14 +222,20 @@ class gato_gmm_model(tf.Module):
         else:
             print(f"INFO: no checkpoint found in {path}, starting fresh")
 
-    def get_boundaries_for_history(self, n_steps: int = 100_000):
+    def get_boundaries_for_history(self, n_steps=100_000):
         """
-        Return a list of length (n_cats-1).
-        • position i = boundary between component i and i+1
-        • value = crossing point in [0,1]   (float)
-        • NaN = this boundary does not exist in this epoch
-        """
+        Compute the boundaries between Gaussian components for each epoch.
 
+        Parameters
+        ----------
+        n_steps : int, optional
+            Number of steps for the numerical grid. Default is 100000.
+
+        Returns
+        -------
+        list
+            A list of boundary positions in [0,1].
+        """
         # activated parameters -------------------------------------------------
         w = tf.nn.softmax(self.mixture_logits).numpy()           # (n_cats,)
         mu = tf.math.sigmoid(self.means[:, 0]).numpy()            # (n_cats,)
@@ -219,16 +265,25 @@ class gato_gmm_model(tf.Module):
 
     def compute_hard_bkg_stats(self, data_dict, low=0.0, high=1.0, eps=1e-8):
         """
-        Hard-assign each background event to its most-likely Gaussian component,
-        then compute per-bin background yield B_j and relative uncertainty sigma_j/B_j,
-        and return them sorted by bin position in 1D or significance in multi-D.
+        Compute per-bin background yields and relative uncertainties.
 
-        Returns:
-          B_sorted       np.array (n_cats,)
-          rel_unc_sorted np.array (n_cats,)
-          order          np.array mapping original→sorted component indices
+        Parameters
+        ----------
+        data_dict : dict
+            A dictionary of input data tensors.
+        low : float, optional
+            Lower bound for the feature space. Default is 0.0.
+        high : float, optional
+            Upper bound for the feature space. Default is 1.0.
+        eps : float, optional
+            Small value to avoid division by zero. Default is 1e-8.
+
+        Returns
+        -------
+        tuple
+            A tuple containing sorted background yields, relative uncertainties,
+            and the component ordering.
         """
-
         raw_logits = self.mixture_logits.numpy()                     # (n_cats,)
         log_mix = tf.nn.log_softmax(raw_logits).numpy()           # (n_cats,)
         raw_means = self.means.numpy()                              # (n_cats,)
@@ -293,45 +348,40 @@ class gato_gmm_model(tf.Module):
         return B[order], rel_unc[order], order
 
 
-# keeping some old class below
-# this one is based on sigmoid functions with learnable offset
 class gato_sigmoid_model(tf.Module):
     """
-    A generic model that:
-      - Has one or more variables to cut on,
-      - Each variable has (n_bins - 1) trainable boundaries,
-      - Splits events by "soft membership" in each bin,
-      - Accumulates yields for each process in each bin,
-      - Then computes a figure of merit (like significance).
+    A generic model that uses sigmoid functions with trainable boundaries.
 
-    Users can override or extend:
-      - how yields are computed,
-      - how significance is combined across categories,
-      - how multiple signals or backgrounds are handled, etc.
+    The model splits events by "soft membership" in each bin, accumulates yields,
+    and computes a figure of merit (e.g., significance).
+
+    Attributes
+    ----------
+    variables_config : list of dict
+        Configuration for each variable, including name, number of categories,
+        and optional steepness for soft transitions.
+    raw_boundaries_list : list of tf.Variable
+        Trainable raw boundaries for each variable.
     """
 
-    def __init__(
-        self,
-        variables_config,
-        name="DifferentiableCutModel",
-        **kwargs
-    ):
+    def __init__(self, variables_config, name="DifferentiableCutModel", **kwargs):
         """
-        variables_config: list of dicts. Each dict must have:
-          - "name": str, the name of the column in the data
-          - "n_cats": int, number of categories for this variable
-          - optionally "steepness": float for the soft cut transitions (defaults to 50)
+        Initialize the sigmoid-based model.
+
+        Parameters
+        ----------
+        variables_config : list of dict
+            Configuration for each variable, including name, number of categories,
+            and optional steepness for soft transitions.
+        name : str, optional
+            Name of the model. Default is "DifferentiableCutModel".
         """
         super().__init__(name=name)
         self.variables_config = variables_config
-
-        # Create a trainable tf.Variable for each variable's boundaries.
         self.raw_boundaries_list = []
         for var_cfg in variables_config:
             n_cats = var_cfg["n_cats"]
-            # in current implementation, the last value is 1, i.e., will be ignored
             shape = (n_cats, ) if n_cats > 1 else (0, )
-
             init_tensor = tf.random.normal(shape=shape, stddev=0.3)
             raw_var = tf.Variable(
                 init_tensor,
@@ -342,13 +392,17 @@ class gato_sigmoid_model(tf.Module):
 
     def call(self, data_dict):
         """
-        For each process in data_dict, we retrieve the relevant columns
-        and apply the soft cut membership for each variable in self.variables_config.
+        Placeholder method for computing yields and loss.
 
-        Then we combine membership from all variables.
-        (For simpler usage, we might do "product" of memberships or "logical" approach.)
+        Parameters
+        ----------
+        data_dict : dict
+            A dictionary of input data tensors.
 
-        Returns a figure of merit (scalar) that we want to maximize.
+        Raises
+        ------
+        NotImplementedError
+            This method must be overridden in subclasses.
         """
         raise NotImplementedError(
             "Base class: user must override the `call` method to define how yields are"
@@ -356,31 +410,46 @@ class gato_sigmoid_model(tf.Module):
         )
 
     def get_effective_boundaries(self):
-        """Return a dict { var_name: sorted list of boundaries in [0,1]. }"""
+        """
+        Retrieve the effective boundaries for each variable.
+
+        Returns
+        -------
+        dict
+            A dictionary where keys are variable names and values are lists of
+            sorted boundaries in [0,1].
+        """
         out = {}
         for var_cfg, raw_var in zip(self.variables_config, self.raw_boundaries_list):
             if raw_var.shape[0] == 0:
                 out[var_cfg["name"]] = []
             else:
-                # out[var_cfg["name"]] = tf.sort(tf.sigmoid(raw_var)).numpy().tolist()
                 out[var_cfg["name"]] = calculate_boundaries(raw_var)
         return out
 
 
 def soft_bin_weights(x, raw_boundaries, steepness=50.0):
     """
-    Given a 1D array x and 'n_cats -1' raw boundaries (trainable in [-inf, +inf]),
-    apply sigmoid to each boundary so they lie in [0,1], then do piecewise
-    membership weighting for each category.
-    Returns a list of length n_cats, each entry is a TF tensor
-    of membership weights in [0..1].
+    Compute soft membership weights for each bin.
+
+    Parameters
+    ----------
+    x : tf.Tensor
+        Input tensor of shape [n_samples].
+    raw_boundaries : tf.Tensor
+        Trainable raw boundaries for the bins.
+    steepness : float, optional
+        Steepness of the sigmoid transitions. Default is 50.0.
+
+    Returns
+    -------
+    list of tf.Tensor
+        A list of tensors representing membership weights for each bin.
     """
     if raw_boundaries.shape[0] == 0:
-        # means only 1 category => everything in that category
         return [tf.ones_like(x, dtype=tf.float32)]
 
     boundaries = calculate_boundaries(raw_boundaries)
-
     n_cats = len(boundaries) + 1
     w_list = []
     for i in range(n_cats):
@@ -399,14 +468,18 @@ def soft_bin_weights(x, raw_boundaries, steepness=50.0):
 
 def calculate_boundaries(raw_boundaries):
     """
-    Transforms raw boundaries (trainable) into an ordered set in (0,1)
-    using a softmax transformation followed by a cumulative sum.
+    Transform raw boundaries into an ordered set in (0,1).
 
-    The softmax ensures the increments are positive and sum to one,
-    and the cumulative sum produces strictly increasing boundaries in [0,1].
+    Parameters
+    ----------
+    raw_boundaries : tf.Tensor
+        Trainable raw boundaries.
+
+    Returns
+    -------
+    tf.Tensor
+        A tensor of sorted boundaries in (0,1).
     """
     increments = tf.nn.softmax(raw_boundaries)
-
     boundaries = tf.cumsum(increments)
-
-    return boundaries[:-1]  # ignore last value which is always 1.0
+    return boundaries[:-1]
