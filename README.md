@@ -35,9 +35,8 @@ python examples/three_class_softmax_example/run_example.py
 Each script writes plots & a significance comparison table.
 
 --------------------------------------------------------------------
-Using the library in your code
+Apply GATO to your own data
 --------------------------------------------------------------------
-The code can be accessed as `import gato`
 ``` python
 # standard GMM model for ND optimisation
 from gato.models import gato_gmm_model
