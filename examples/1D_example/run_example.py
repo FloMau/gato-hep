@@ -1,6 +1,5 @@
 import argparse
 import os
-import sys
 
 import hist
 import numpy as np
@@ -8,12 +7,6 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 
 tfd = tfp.distributions
-
-# Ensure the 'gato' package can be imported: insert the 'src' directory into sys.path
-repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-src_path = os.path.join(repo_root, "src")
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
 
 # Import from the installed/packaged gato modules
 from gato.data_generation import generate_toy_data_1D

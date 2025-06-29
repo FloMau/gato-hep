@@ -10,13 +10,14 @@ keywords = ["differentiable", "binning", "optimization", "HEP", "significance"]
 readme = "README.md"
 license = { text="MIT" }
 authors = [{name="Florian Mausolf", email="florian.mausolf@rwth-aachen.de" }]
+requires-python = ">=3.8"
 
 dependencies = [
     "numpy>=1.20",
     "tensorflow>=2.17,<2.20",
     "tensorflow-probability>=0.24",
     "tf_keras==2.19.0",
-    "mldtypes>=0.4.1",
+    "ml_dtypes>=0.4.1",
     "mplhep",
     "matplotlib>=3.7",
     "scipy",
