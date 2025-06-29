@@ -4,11 +4,7 @@ import numpy as np
 import sys
 import tensorflow as tf
 import tensorflow_probability as tfp
-repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-src_path = os.path.join(repo_root, "src")
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
-# Import necessary modules from the gato package
+
 from gato.data_generation import generate_toy_data_3class_3D
 from gato.losses import high_bkg_uncertainty_penalty, low_bkg_penalty
 from gato.models import gato_gmm_model

@@ -3,6 +3,7 @@ from pathlib import Path
 
 # make sure our package is importable
 sys.path.insert(0, os.path.abspath("../.."))   # now src/ is on PYTHONPATH
+# sys.path.insert(0, os.path.abspath(os.path.join(__file__, "..", "..", "src")))
 
 # load tomllib or tomli
 if sys.version_info < (3, 11):
@@ -31,6 +32,10 @@ extensions = [
     "sphinx_autodoc_typehints",
 ]
 
+
+html_theme = "pydata_sphinx_theme"
+here = Path(__file__).parent
+staticfolder = here / "_static"
 
 project = pyproject["project"]["name"]
 author = pyproject["project"]["authors"][0]["name"]

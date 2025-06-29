@@ -161,13 +161,46 @@ def generate_toy_data_3class_3D(
 ):
     """
     Generate 3D Gaussian data for 2 signal and 5 background classes.
-    For each point, compute likelihood-ratio-based 3-class scores:
-        [score_signal1, score_signal2, score_background]
-    Returns dict of DataFrames with columns: 'NN_output' (3-vector) and 'weight'.
 
-    n_bkg is the total number of background events; it will be
-    split across bkg1..bkg5 in proportion to their cross-sections
-    so that each background class ends up with the same per-event weight.
+    For each point, compute likelihood-ratio-based 3-class scores:
+    [score_signal1, score_signal2, score_background].
+
+    Parameters
+    ----------
+    n_signal1 : int, optional
+        Number of events for signal1. Default is 100000.
+    n_signal2 : int, optional
+        Number of events for signal2. Default is 100000.
+    n_bkg : int, optional
+        Total number of background events. Default is 500000.
+    xs_signal1 : float, optional
+        Cross-section for signal1. Default is 0.5.
+    xs_signal2 : float, optional
+        Cross-section for signal2. Default is 0.1.
+    xs_bkg1 : float, optional
+        Cross-section for background1. Default is 100.
+    xs_bkg2 : float, optional
+        Cross-section for background2. Default is 80.
+    xs_bkg3 : float, optional
+        Cross-section for background3. Default is 50.
+    xs_bkg4 : float, optional
+        Cross-section for background4. Default is 20.
+    xs_bkg5 : float, optional
+        Cross-section for background5. Default is 10.
+    lumi : float, optional
+        Luminosity for scaling event weights. Default is 100.0.
+    noise_scale : float, optional
+        Scale of multiplicative noise applied to the data. Default is 0.2.
+    seed : int or None, optional
+        Seed for the random number generator. Default is None.
+
+    Returns
+    -------
+    dict of pandas.DataFrame
+        A dictionary of DataFrames, each containing the generated toy data
+        with columns:
+        - 'NN_output': 3-vector of scores [score_signal1, score_signal2, score_background].
+        - 'weight': Event weight.
     """
     if seed is not None:
         np.random.seed(seed)

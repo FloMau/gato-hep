@@ -1,11 +1,12 @@
-Welcome to GATO’s documentation!
+Welcome to GATO's documentation!
 ================================
 
 .. toctree::
    :maxdepth: 2
    :caption: 📚 Contents:
 
-   api
+   installation
+   api/index
    examples
 
 Indices and tables
