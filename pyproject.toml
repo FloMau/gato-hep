@@ -64,7 +64,8 @@ docs = [
   "sphinx-rtd-theme",
   "sphinx-autodoc-typehints",
   "sphinx-autoapi",
-  "myst-parser"
+  "myst-parser",
+  "pydata-sphinx-theme"
 ]
 
 [project.urls]
