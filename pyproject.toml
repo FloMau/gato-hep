@@ -57,9 +57,8 @@ ignore = [
   "RUF012", # Would require a lot of ClassVar's
 ]
 
-[dependency-groups]
+[project.optional-dependencies]
 dev = ["pytest", "pytest-cov"]
-
 docs = [
   "sphinx>=5.0",
   "sphinx-rtd-theme",
