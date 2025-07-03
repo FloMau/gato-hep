@@ -1,13 +1,18 @@
 gato-hep: Gradient-based Categorization Optimizer for High Energy Physics
 ==============================================
 
+[![Documentation Status](https://readthedocs.org/projects/gato-hep/badge/?version=latest)](https://gato-hep.readthedocs.io/en/latest/)
+
+
 A toolkit for binning / categorisation optimisation with respect to signal 
 significance for HEP analyses, using gradient-descent methods.
 gatohep relies on TensorFlow with TensorFlow-Probability.
 
 The categorisation can be performed directly in a multidimensional discriminant 
 space, e.g. from a mutliclassifier with softmax activation.
-The bins are defined by learnable multidimensional Gaussians as a Gaussian Mixture Model (GMM), or, well working in 1D, using bin boundaries approximated by steep sigmoid functions of learnable position. 
+The bins are defined by learnable multidimensional Gaussians as a Gaussian Mixture Model (GMM), or, well working in 1D, using bin boundaries approximated by steep sigmoid functions of learnable position.
+
+See the full documentation at <https://gato-hep.readthedocs.io/>.
 
 --------------------------------------------------------------------
 Quick install (editable mode)

@@ -1,4 +1,4 @@
-Welcome to gatohep's documentation!
+Welcome to the gato-hep documentation.
 ================================
 
 .. toctree::
