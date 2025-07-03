@@ -1,6 +1,6 @@
 API Reference
 =============
-Welcome to GATO's documentation! The following modules are contained in the API reference: 
+Welcome to gato-hep's documentation! The following modules are contained in the API reference: 
 
 .. toctree::
    :maxdepth: 1

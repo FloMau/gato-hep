@@ -1,4 +1,4 @@
-from gato.utils import safe_sigmoid, asymptotic_significance
+from gatohep.utils import safe_sigmoid, asymptotic_significance
 import math
 import numpy as np
 from scipy.special import expit

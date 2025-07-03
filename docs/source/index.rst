@@ -1,4 +1,4 @@
-Welcome to GATO's documentation!
+Welcome to gatohep's documentation!
 ================================
 
 .. toctree::

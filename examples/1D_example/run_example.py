@@ -9,22 +9,22 @@ import tensorflow_probability as tfp
 tfd = tfp.distributions
 
 # Import from the installed/packaged gato modules
-from gato.data_generation import generate_toy_data_1D
-from gato.losses import (
+from gatohep.data_generation import generate_toy_data_1D
+from gatohep.losses import (
     high_bkg_uncertainty_penalty,
     low_bkg_penalty,
 )
-from gato.models import (
+from gatohep.models import (
     gato_gmm_model,
 )
-from gato.plotting_utils import (
+from gatohep.plotting_utils import (
     plot_gmm_1d,  # if your 1D example uses this helper
     plot_history,
     plot_significance_comparison,
     plot_stacked_histograms,
     plot_yield_vs_uncertainty,
 )
-from gato.utils import (
+from gatohep.utils import (
     align_boundary_tracks,  # if this helper was in utils
     asymptotic_significance,
     compute_significance_from_hists,

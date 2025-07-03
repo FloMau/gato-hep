@@ -1,7 +1,7 @@
-gato.models
+gatohep.models
 ===========
 
-.. automodule:: gato.models
+.. automodule:: gatohep.models
    :members:
    :undoc-members:
    :show-inheritance:

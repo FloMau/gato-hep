@@ -1,6 +1,6 @@
-gato.utils
+gatohep.utils
 ==========
 
-.. automodule:: gato.utils
+.. automodule:: gatohep.utils
    :members:
    :undoc-members:

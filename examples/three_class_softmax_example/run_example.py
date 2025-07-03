@@ -5,10 +5,10 @@ import sys
 import tensorflow as tf
 import tensorflow_probability as tfp
 
-from gato.data_generation import generate_toy_data_3class_3D
-from gato.losses import high_bkg_uncertainty_penalty, low_bkg_penalty
-from gato.models import gato_gmm_model
-from gato.plotting_utils import (
+from gatohep.data_generation import generate_toy_data_3class_3D
+from gatohep.losses import high_bkg_uncertainty_penalty, low_bkg_penalty
+from gatohep.models import gato_gmm_model
+from gatohep.plotting_utils import (
     assign_bins_and_order,
     fill_histogram_from_assignments,
     plot_bin_boundaries_simplex,
@@ -18,7 +18,7 @@ from gato.plotting_utils import (
     plot_stacked_histograms,
     plot_yield_vs_uncertainty,
 )
-from gato.utils import (
+from gatohep.utils import (
     asymptotic_significance,
     compute_significance_from_hists,
     create_hist,
