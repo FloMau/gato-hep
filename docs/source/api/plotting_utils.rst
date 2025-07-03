@@ -1,6 +1,6 @@
-gato.plotting_utils
+gatohep.plotting_utils
 ===================
 
-.. automodule:: gato.plotting_utils
+.. automodule:: gatohep.plotting_utils
    :members:
    :undoc-members:

@@ -1,6 +1,6 @@
-gato.losses
+gatohep.losses
 ===========
 
-.. automodule:: gato.losses
+.. automodule:: gatohep.losses
    :members:
    :undoc-members:

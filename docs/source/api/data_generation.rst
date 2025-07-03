@@ -1,6 +1,6 @@
-gato.data_generation
+gatohep.data_generation
 ====================
 
-.. automodule:: gato.data_generation
+.. automodule:: gatohep.data_generation
    :members:
    :undoc-members:

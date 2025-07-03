@@ -4,7 +4,7 @@ Installation
 Getting Started
 ---------------
 
-GATO is available on PyPI and can be installed via pip. We recommend using a virtual environment:
+gato-hep will soon be available on PyPI and can be installed via pip. We recommend using a virtual environment:
 
 .. code-block:: bash
 
@@ -13,7 +13,7 @@ GATO is available on PyPI and can be installed via pip. We recommend using a vir
    source .venv/bin/activate
 
    # Install the latest stable release from PyPI
-   pip install gato
+   pip install gato-hep
 
 Development Version
 -------------------
@@ -22,15 +22,15 @@ To try the very latest changes or contribute to the codebase, you can for exampl
 
    .. code-block:: bash
 
-      git clone https://github.com/FloMau/gato.git
-      cd gato
+      git clone https://github.com/FloMau/gato-hep.git
+      cd gato-hep
       pip install -e .
 
 Post-install Check
 ------------------
 
-After installation, verify that GATO is available and check the version:
+After installation, verify that gato-hep is available and check the version:
 
 .. code-block:: bash
 
-   python -c "import gato; print(f'GATO version {gato.__version__} installed.')"
+   python -c "import gatohep; print(f'gato-hep version {gatohep.__version__} installed.')"
