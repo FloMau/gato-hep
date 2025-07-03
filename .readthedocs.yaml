@@ -1,0 +1,25 @@
+# .readthedocs.yaml
+version: 2
+
+python:
+  # pick any supported version; e.g. 3.10, 3.11, 3.12…
+  version: 3.10
+
+  install:
+    # 1) install your package in “editable” mode so Sphinx can import it
+    - method: pip
+      path: .
+
+    # 2) install Sphinx & your doc‐build-only deps
+    - method: pip
+      args:
+        - install
+        - sphinx
+        - sphinx-autodoc-typehints
+        - sphinxcontrib-napoleon
+        - alabaster
+        # …any other Sphinx extensions you used
+
+sphinx:
+  # where your conf.py lives
+  configuration: docs/source/conf.py
