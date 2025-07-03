@@ -60,6 +60,8 @@ ignore = [
 [dependency-groups]
 dev = ["pytest", "pytest-cov"]
 
+docs = ["sphinx", "sphinx-autodoc-typehints"]
+
 [project.urls]
 "Repository" = "https://github.com/FloMau/gato-hep"
 

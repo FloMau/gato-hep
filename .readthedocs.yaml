@@ -4,7 +4,7 @@ version: 2
 build:
   os: ubuntu-24.04
   tools:
-    python: "3.11"
+    python: "3.10"
 
 python:
   # pick any supported version; e.g. 3.10, 3.11, 3.12…
@@ -13,17 +13,7 @@ python:
   install:
     # 1) install your package in “editable” mode so Sphinx can import it
     - method: pip
-      path: .
-
-    # 2) install Sphinx & your doc‐build-only deps
-    - method: pip
-      args:
-        - install
-        - sphinx
-        - sphinx-autodoc-typehints
-        - sphinxcontrib-napoleon
-        - alabaster
-        # …any other Sphinx extensions you used
+      path: .[docs]
 
 sphinx:
   # where your conf.py lives
