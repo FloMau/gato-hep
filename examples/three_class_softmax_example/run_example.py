@@ -1,7 +1,6 @@
 import os
 import argparse
 import numpy as np
-import sys
 import tensorflow as tf
 import tensorflow_probability as tfp
 
@@ -27,22 +26,6 @@ from gatohep.utils import (
 tfd = tfp.distributions
 
 
-# helper: slice to 2-D & convert to tensors
-def convert_data_to_tensors_2d(data_dict):
-    """
-    Keep only P_sig1 (dim0) and P_sig2 (dim1).  Shape → (N,2)
-    """
-    tensor_data = {}
-    for proc, df in data_dict.items():
-        full_softmax = np.stack(df["NN_output"].values)      # (N,3)
-        two_d = full_softmax[:, :2]                   # drop background coord
-        tensor_data[proc] = {
-            "NN_output": tf.constant(two_d, dtype=tf.float32),
-            "weight"   : tf.constant(df["weight"].values, tf.float32)
-        }
-    return tensor_data
-
-
 def convert_data_to_tensors(data):
     tensor_data = {}
     for proc, df in data.items():
@@ -56,49 +39,35 @@ def convert_data_to_tensors(data):
 
 
 #  2-D GMM gato model
-class GATO_2D(gato_gmm_model):
-    def __init__(self, n_cats, temperature=0.3, name="GATO_2D"):
-        super().__init__(n_cats=n_cats,
-                         dim=2,
-                         temperature=temperature,
-                         name=name)
+class gato_2D(gato_gmm_model):
+    def __init__(self, n_cats, temperature=0.3, name="gato_2D"):
+        super().__init__(
+            n_cats=n_cats,
+            dim=2,
+            temperature=temperature,
+            mean_norm="softmax",
+            name=name
+        )
 
     def call(self, data_dict):
-        log_mix = tf.nn.log_softmax(self.mixture_logits)
-        scale_tril = self.get_scale_tril()
-        means_raw = self.means        # shape (n_cats, 2)
-        # Append a zero logit for each component:
-        zeros = tf.zeros(
-            (tf.shape(means_raw)[0], 1), dtype=means_raw.dtype
-        )  # (n_cats,1)
-        full_logits = tf.concat([means_raw, zeros], axis=1)   # shape (n_cats,3)
-        probs3 = tf.nn.softmax(full_logits, axis=1)           # shape (n_cats,3)
-        locs = probs3[:, :self.dim]                           # shape (n_cats,2)
+        """
+            Compute the training loss and background yields,
+            which can be used for penalty terms.
+        """
+        # get the probabilities from the gato GMM
+        probs_dict = self.get_probs(data_dict)
 
         sig1_y = tf.zeros(self.n_cats, tf.float32)
         sig2_y = tf.zeros(self.n_cats, tf.float32)
         bkg_y = tf.zeros(self.n_cats, tf.float32)
         bkg_w2 = tf.zeros(self.n_cats, tf.float32)
 
-        for proc, t in data_dict.items():
-            x = t["NN_output"]            # (N,2)
-            w = t["weight"]
+        for proc, probs in probs_dict.items():
+            w = data_dict[proc]["weight"]
             w2 = w**2
 
-            # per-component log-pdfs
-            lp = []
-            for k in range(self.n_cats):
-                lp.append(
-                    tfd.MultivariateNormalTriL(
-                        loc=locs[k],
-                        scale_tril=scale_tril[k]
-                    ).log_prob(x)
-                )
-            lp = tf.stack(lp, axis=1)     # (N,k)
-            gamma = tf.nn.softmax((lp + log_mix) / self.temperature, axis=1)
-
-            y = tf.reduce_sum(gamma * w[:,None],  axis=0)
-            y_w2 = tf.reduce_sum(gamma * w2[:,None], axis=0)
+            y = tf.reduce_sum(probs * w[:,None],  axis=0)
+            y_w2 = tf.reduce_sum(probs * w2[:,None], axis=0)
 
             if proc == "signal1":
                 sig1_y += y
@@ -165,10 +134,7 @@ def main():
 
     # ---------- baseline (same as before)
     baseline_results = {'signal1':{}, 'signal2':{}}
-    for nb in [2,5,10]:
-        # …. identical code, just care about dim==0 and dim==1 …
-
-        # ---- channel 1
+    for nb in [2, 5, 10]:
         h_sig1 = None
         bkg1 = []
         lbl1 = []
@@ -188,7 +154,6 @@ def main():
                 lbl1.append(p)
         baseline_results['signal1'][nb] = compute_significance_from_hists(h_sig1,bkg1)
 
-        # ---- channel 2
         h_sig2 = None
         bkg2 = []
         lbl2 = []
@@ -219,14 +184,14 @@ def main():
         def train_step(model, tdata, opt, lamY, lamU, thrY, thrU):
             with tf.GradientTape() as tape:
                 loss, B, Bw2 = model.call(tdata)
-                penY = low_bkg_penalty(B,     threshold=thrY)
+                penY = low_bkg_penalty(B, threshold=thrY)
                 penU = high_bkg_uncertainty_penalty(Bw2, B, rel_threshold=thrU)
                 total = loss + lamY*penY + lamU*penU
             g = tape.gradient(total, model.trainable_variables)
             opt.apply_gradients(zip(g, model.trainable_variables))
             return loss
 
-        model = GATO_2D(n_cats=n_cats, temperature=0.5)
+        model = gato_2D(n_cats=n_cats, temperature=0.5)
         optimizer = tf.keras.optimizers.Adam(0.02)
 
         loss_history = []
@@ -264,7 +229,7 @@ def main():
         gato_results['signal1'][n_cats] = Z1
         gato_results['signal2'][n_cats] = Z2
 
-        # ---- quick plots
+        # quick plots
         plot_learned_gaussians(
             data=data, model=model, dim_x=0, dim_y=1,
             output_filename=os.path.join(path_gato, f"Gaussians_{n_cats}bins.pdf"),
@@ -293,77 +258,53 @@ def main():
         sig1_scale = 100
         sig2_scale = 500
 
-        # Plot linear-scale stacked histogram:
-        plot_stacked_histograms(
-            stacked_hists=opt_bkgs,
-            process_labels=bg_procs,
-            signal_hists=[
-                sig1_scale * filled["signal1"], sig2_scale * filled["signal2"]
-            ],
-            signal_labels=[
-                f"Signal1 x{sig1_scale}", f"Signal2 x{sig2_scale}"
-            ],
-            output_filename=os.path.join(
-                path_gato, f"optimized_dist_{n_cats}bins_linear.pdf"
-            ),
-            axis_labels=("Bin index", "Events"),
-            normalize=False,
-            log=False
-        )
-        print(
-            f"Saved optimized linear histogram: optimized_dist_{n_cats}bins_linear.pdf"
-        )
+        for use_log in (False, True):
+            suffix = "log" if use_log else "linear"
 
-        # Plot log-scale stacked histogram:
-        plot_stacked_histograms(
-            stacked_hists=opt_bkgs,
-            process_labels=bg_procs,
-            signal_hists=[
-                sig1_scale * filled["signal1"], sig2_scale * filled["signal2"]
-            ],
-            signal_labels=[
-                f"Signal1 x{sig1_scale}", f"Signal2 x{sig2_scale}"
-            ],
-            output_filename=os.path.join(
-                path_gato, f"optimized_dist_{n_cats}bins_log.pdf"
-            ),
-            axis_labels=("Bin index", "Events"),
-            normalize=False,
-            log=True
-        )
-        print(
-            f"Saved optimized log histogram: optimized_dist_{n_cats}bins_log.pdf"
-        )
+            plot_stacked_histograms(
+                stacked_hists=opt_bkgs,
+                process_labels=bg_procs,
+                signal_hists=[
+                    sig1_scale * filled["signal1"],
+                    sig2_scale * filled["signal2"]
+                ],
+                signal_labels=[
+                    f"Signal1 x{sig1_scale}",
+                    f"Signal2 x{sig2_scale}"
+                ],
+                output_filename=os.path.join(
+                    path_gato, f"optimized_dist_{n_cats}bins_{suffix}.pdf"
+                ),
+                axis_labels=("Bin index", "Events"),
+                normalize=False,
+                log=use_log
+            )
+            print(
+                f"Saved optimized {suffix} histogram:\
+                optimized_dist_{n_cats}bins_{suffix}.pdf"
+            )
 
-        # 2) Yield vs. relative uncertainty plot for background bins:
         B_sorted, rel_unc_sorted, _ = model.compute_hard_bkg_stats(tensor_data)
-        # reorder according to the sorted bin order:
         B_ord = B_sorted[order]
         unc_ord = rel_unc_sorted[order]
 
-        # Linear
-        plot_yield_vs_uncertainty(
-            B_ord,
-            unc_ord,
-            output_filename=os.path.join(
-                path_gato, f"yield_vs_unc_{n_cats}bins_linear.pdf"
-            ),
-            log=False
-        )
-        print(f"Saved yield vs. unc (linear): yield_vs_unc_{n_cats}bins_linear.pdf")
+        for use_log in (False, True):
+            suffix = "log" if use_log else "linear"
 
-        # Log
-        plot_yield_vs_uncertainty(
-            B_ord,
-            unc_ord,
-            log=True,
-            output_filename=os.path.join(
-                path_gato, f"yield_vs_unc_{n_cats}bins_log.pdf"
+            plot_yield_vs_uncertainty(
+                B_ord,
+                unc_ord,
+                log=use_log,
+                output_filename=os.path.join(
+                    path_gato, f"yield_vs_unc_{n_cats}bins_{suffix}.pdf"
+                )
             )
-        )
-        print(f"Saved yield vs. unc (log): yield_vs_unc_{n_cats}bins_log.pdf")
+            print(
+                f"Saved yield vs. unc ({suffix}):\
+                yield_vs_unc_{n_cats}bins_{suffix}.pdf"
+            )
 
-    # ---------- summary comparison
+    # summary comparison
     plot_significance_comparison(
         baseline_results={
             k:{

@@ -18,82 +18,59 @@ from gatohep.models import (
     gato_gmm_model,
 )
 from gatohep.plotting_utils import (
-    plot_gmm_1d,  # if your 1D example uses this helper
+    plot_gmm_1d,
     plot_history,
     plot_significance_comparison,
     plot_stacked_histograms,
     plot_yield_vs_uncertainty,
 )
 from gatohep.utils import (
-    align_boundary_tracks,  # if this helper was in utils
+    align_boundary_tracks,
     asymptotic_significance,
     compute_significance_from_hists,
     create_hist,
-    df_dict_to_tensors,  # if used in your 1D script
+    df_dict_to_tensors,
 )
 
-
+# Define a 1D GATO model for the toy example inheriting from gato_gmm_model
 class gato_1D(gato_gmm_model):
-    def __init__(self, n_cats, temperature=1.0, name="el_gato"):
-        super().__init__(
-            # variables_config=[{"name":"NN_output", "n_cats":n_cats}],
-            n_cats=n_cats,
-            dim=1,
-            temperature=temperature,
-            name=name
-        )
+    def __init__(self, n_cats, temperature=0.3, mean_norm="sigmoid"):
+        super().__init__(n_cats=n_cats,
+                         dim=1,
+                         temperature=temperature,
+                         mean_norm=mean_norm,
+                         mean_range=(0., 1.))  # dummy NN output is already in (0,1)
 
     def call(self, data_dict):
-        # pull out our params
-        log_mix = tf.nn.log_softmax(self.mixture_logits)        # [n_cats]
-        scale_tril = self.get_scale_tril()                         # [n_cats,1,1]
-        means = tf.math.sigmoid(self.means)                   # [n_cats,1]
+        """
+        Compute the loss for two signals vs. backgrounds
+        using the generic helpers from the base class.
+        """
+        probs_dict = self.get_probs(data_dict)  # {proc: (N, k)}
 
-        # accumulators
-        S = tf.zeros([self.n_cats], dtype=tf.float32)
-        B = tf.zeros([self.n_cats], dtype=tf.float32)
-        B_sumw2 = tf.zeros([self.n_cats], dtype=tf.float32)
+        sig_yield = tf.zeros(self.n_cats, tf.float32)
+        bkg_yield = tf.zeros(self.n_cats, tf.float32)
+        bkg_sumw2 = tf.zeros(self.n_cats, tf.float32)
 
-        for proc, t in data_dict.items():
-            # x: [N] -> [N,1] for the GMM
-            x = tf.expand_dims(t["NN_output"], 1)
-            w = t["weight"]
-            w2 = t["weight"]**2
+        for proc, probs in probs_dict.items():
+            w  = data_dict[proc]["weight"]
+            w2 = w ** 2
+            y  = tf.reduce_sum(probs * w[:, None],  axis=0)
+            y2 = tf.reduce_sum(probs * w2[:, None], axis=0)
 
-            # compute per‐component log-likelihood
-            log_probs = []
-            for i in range(self.n_cats):
-                dist = tfd.MultivariateNormalTriL(
-                    loc=means[i],
-                    scale_tril=scale_tril[i]
-                )
-                log_probs.append(dist.log_prob(x))   # [N]
-            log_probs = tf.stack(log_probs, axis=1)  # [N,n_cats]
-            # posterior memberships
-            log_joint = (log_probs + log_mix)
-            memberships = tf.nn.softmax(
-                log_joint / self.temperature, axis=1
-            )  # [N,n_cats]
-
-            # sum into yields
-            yields = tf.reduce_sum(
-                memberships * tf.expand_dims(w,1), axis=0
-            )  # [n_cats]
-            sumw2 = tf.reduce_sum(
-                memberships * tf.expand_dims(w2,1), axis=0
-            )  # [n_cats]
-
-            if proc == "signal":
-                S += yields
+            if proc.startswith("signal"):
+                sig_yield += y
             else:
-                B += yields
-                B_sumw2 += sumw2
+                bkg_yield  += y
+                bkg_sumw2 += y2
 
         # Asimov per-bin + quadrature
-        Z_bins = asymptotic_significance(S, B)        # [n_cats]
-        Z_tot = tf.sqrt(tf.reduce_sum(Z_bins**2))     # scalar
-
-        return -Z_tot, B, B_sumw2
+        loss = - tf.sqrt(
+            tf.reduce_sum(
+                asymptotic_significance(sig_yield, bkg_yield) ** 2
+            )
+        )
+        return loss, bkg_yield, bkg_sumw2
 
 
 # main: Generate data, run fixed binning and optimization, then compare.

@@ -18,13 +18,9 @@ def low_bkg_penalty(bkg_yields, threshold=10.0):
         A scalar tensor representing the total penalty summed over all categories.
     """
     # penalty per category
-    penalty_vals = (
-        tf.nn.relu(threshold - bkg_yields)
-    )**2
-    # sum over categories
-    total_penalty = tf.reduce_sum(penalty_vals)
+    penalty_vals = (tf.nn.relu(threshold - bkg_yields)) ** 2
 
-    return total_penalty
+    return tf.reduce_sum(penalty_vals)
 
 
 def high_bkg_uncertainty_penalty(bkg_sumsq, bkg_yields, rel_threshold=0.2):
@@ -34,7 +30,8 @@ def high_bkg_uncertainty_penalty(bkg_sumsq, bkg_yields, rel_threshold=0.2):
     Parameters
     ----------
     bkg_sumsq : tf.Tensor
-        A tensor of shape [ncat] representing the sum of squared weights (w_i^2) in each bin.
+        A tensor of shape [ncat] representing the sum of squared weights
+            (w_i^2) in each bin.
     bkg_yields : tf.Tensor
         A tensor of shape [ncat] representing the sum of weights (w_i) in each bin.
     rel_threshold : float, optional

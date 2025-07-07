@@ -1,5 +1,5 @@
 Welcome to the gato-hep documentation.
-================================
+======================================
 
 .. toctree::
    :maxdepth: 2

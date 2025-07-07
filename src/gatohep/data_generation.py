@@ -31,9 +31,14 @@ def sample_gaussian(n_events, mean, cov, seed=None):
 
 
 def generate_toy_data_1D(
-    n_signal=100000, n_bkg=300000,
-    xs_signal=0.5, xs_bkg1=50, xs_bkg2=15, xs_bkg3=10,
-    lumi=100, seed=None
+    n_signal=100000,
+    n_bkg=300000,
+    xs_signal=0.5,
+    xs_bkg1=50,
+    xs_bkg2=15,
+    xs_bkg3=10,
+    lumi=100,
+    seed=None,
 ):
     """
     Generate 1D toy data for signal and background events.
@@ -68,25 +73,17 @@ def generate_toy_data_1D(
 
     # 1) define means & covariances
     means = {
-        "signal": np.array([0.5,  0.5,  1.0]),
-        "bkg1":   np.array([-0.5,  1.,  -1]),
-        "bkg2":   np.array([0.25,  -0.25,  3.0]),
-        "bkg3":   np.array([0.75,  0.25,  -0.5]),
+        "signal": np.array([0.5, 0.5, 1.0]),
+        "bkg1": np.array([-0.5, 1.0, -1]),
+        "bkg2": np.array([0.25, -0.25, 3.0]),
+        "bkg3": np.array([0.75, 0.25, -0.5]),
     }
 
     covs = {
-        "signal": np.array([[1, 0.2, 0.1],
-                            [0.2, 1, 0.2],
-                            [0.1, 0.2, 1]]),
-        "bkg1":   np.array([[0.5, 0.2, 0.0],
-                            [0.2, 0.5, 0.2],
-                            [0.0, 0.2, 0.5]]),
-        "bkg2":   np.array([[0.5, 0.1, 0.3],
-                            [0.1, 0.5, 0.1],
-                            [0.3, 0.1, 0.5]]),
-        "bkg3":   np.array([[0.5, 0.2, 0.4],
-                            [0.2, 0.5, 0.2],
-                            [0.4, 0.2, 0.5]]),
+        "signal": np.array([[1, 0.2, 0.1], [0.2, 1, 0.2], [0.1, 0.2, 1]]),
+        "bkg1": np.array([[0.5, 0.2, 0.0], [0.2, 0.5, 0.2], [0.0, 0.2, 0.5]]),
+        "bkg2": np.array([[0.5, 0.1, 0.3], [0.1, 0.5, 0.1], [0.3, 0.1, 0.5]]),
+        "bkg3": np.array([[0.5, 0.2, 0.4], [0.2, 0.5, 0.2], [0.4, 0.2, 0.5]]),
     }
 
     # 2) split the single n_bkg *proportionally* to each cross-section so that
@@ -97,28 +94,27 @@ def generate_toy_data_1D(
     n_bkg3 = n_bkg - (n_bkg1 + n_bkg2)
     counts = {
         "signal": n_signal,
-        "bkg1":   n_bkg1,
-        "bkg2":   n_bkg2,
-        "bkg3":   n_bkg3,
+        "bkg1": n_bkg1,
+        "bkg2": n_bkg2,
+        "bkg3": n_bkg3,
     }
 
     xs = {
         "signal": xs_signal,
-        "bkg1":   xs_bkg1,
-        "bkg2":   xs_bkg2,
-        "bkg3":   xs_bkg3,
+        "bkg1": xs_bkg1,
+        "bkg2": xs_bkg2,
+        "bkg3": xs_bkg3,
     }
 
     # 3) sample
     raw = {}
-    for proc in means.items():
+    for proc in means:
         X = sample_gaussian(counts[proc], means[proc], covs[proc], seed=seed)
         w = xs[proc] * lumi / counts[proc]
         raw[proc] = {"X": X, "w": w}
 
     # 4) build scipy MVN pdfs
-    pdfs = {proc: multivariate_normal(means[proc], covs[proc])
-            for proc in means}
+    pdfs = {proc: multivariate_normal(means[proc], covs[proc]) for proc in means}
 
     # total cross section of background
     total_bkg_xs = sum(xs[p] for p in pdfs if p != "signal")
@@ -142,10 +138,7 @@ def generate_toy_data_1D(
 
         disc = lr / (1.0 + lr)
         # disc = 2 * tf.nn.sigmoid(lr) - 1
-        dfs[proc] = pd.DataFrame({
-            "NN_output": disc,
-            "weight":    w
-        })
+        dfs[proc] = pd.DataFrame({"NN_output": disc, "weight": w})
 
     return dfs
 
@@ -153,11 +146,19 @@ def generate_toy_data_1D(
 # 3D Toy Data Generator for 3-class classifier
 # Background consists of 5 individual Gaussian processes
 def generate_toy_data_3class_3D(
-    n_signal1=100000, n_signal2=100000,
+    n_signal1=100000,
+    n_signal2=100000,
     n_bkg=500000,
-    xs_signal1=0.5, xs_signal2=0.1,
-    xs_bkg1=100, xs_bkg2=80, xs_bkg3=50, xs_bkg4=20, xs_bkg5=10,
-    lumi=100.0, noise_scale=0.2, seed=None
+    xs_signal1=0.5,
+    xs_signal2=0.1,
+    xs_bkg1=100,
+    xs_bkg2=80,
+    xs_bkg3=50,
+    xs_bkg4=20,
+    xs_bkg5=10,
+    lumi=100.0,
+    noise_scale=0.2,
+    seed=None,
 ):
     """
     Generate 3D Gaussian data for 2 signal and 5 background classes.
@@ -199,7 +200,8 @@ def generate_toy_data_3class_3D(
     dict of pandas.DataFrame
         A dictionary of DataFrames, each containing the generated toy data
         with columns:
-        - 'NN_output': 3-vector of scores [score_signal1, score_signal2, score_background].
+        - 'NN_output': 3-vector of scores
+        [score_signal1, score_signal2, score_background].
         - 'weight': Event weight.
     """
     if seed is not None:
@@ -218,34 +220,34 @@ def generate_toy_data_3class_3D(
     means = {
         "signal1": np.array([1.5, -1.0, -1.0]),
         "signal2": np.array([-1.0, 1.5, -1.0]),
-        "bkg1":    np.array([-0.5, -0.5, 1.0]),
-        "bkg2":    np.array([0.5, -0.5, 0.8]),
-        "bkg3":    np.array([0.5,  0.5, -0.6]),
-        "bkg4":    np.array([-0.5,  1.0, -0.4]),
-        "bkg5":    np.array([-0.5,  0.5, -0.2])
+        "bkg1": np.array([-0.5, -0.5, 1.0]),
+        "bkg2": np.array([0.5, -0.5, 0.8]),
+        "bkg3": np.array([0.5, 0.5, -0.6]),
+        "bkg4": np.array([-0.5, 1.0, -0.4]),
+        "bkg5": np.array([-0.5, 0.5, -0.2]),
     }
 
     # Slightly correlated 3D Gaussian
-    cov = np.eye(3)*1.0 + 0.2*(np.ones((3,3)) - np.eye(3))
+    cov = np.eye(3) * 1.0 + 0.2 * (np.ones((3, 3)) - np.eye(3))
 
     counts = {
         "signal1": n_signal1,
         "signal2": n_signal2,
-        "bkg1":    n_bkg1,
-        "bkg2":    n_bkg2,
-        "bkg3":    n_bkg3,
-        "bkg4":    n_bkg4,
-        "bkg5":    n_bkg5
+        "bkg1": n_bkg1,
+        "bkg2": n_bkg2,
+        "bkg3": n_bkg3,
+        "bkg4": n_bkg4,
+        "bkg5": n_bkg5,
     }
 
     xs = {
         "signal1": xs_signal1,
         "signal2": xs_signal2,
-        "bkg1":    xs_bkg1,
-        "bkg2":    xs_bkg2,
-        "bkg3":    xs_bkg3,
-        "bkg4":    xs_bkg4,
-        "bkg5":    xs_bkg5
+        "bkg1": xs_bkg1,
+        "bkg2": xs_bkg2,
+        "bkg3": xs_bkg3,
+        "bkg4": xs_bkg4,
+        "bkg5": xs_bkg5,
     }
 
     # 1. Sample raw 3D data
@@ -260,20 +262,14 @@ def generate_toy_data_3class_3D(
         raw[p] *= noise
 
     # 3. Build PDFs
-    pdfs = {
-        p: multivariate_normal(mean=means[p], cov=cov)
-        for p in processes
-    }
+    pdfs = {p: multivariate_normal(mean=means[p], cov=cov) for p in processes}
 
     # 4. Combined background PDF with proper cross-section weighting
     bkg_processes = [p for p in processes if p.startswith("bkg")]
     total_bkg_xs = sum(xs[p] for p in bkg_processes)
 
     def combined_bkg_pdf(X):
-        return sum(
-            (xs[p] / total_bkg_xs) * pdfs[p].pdf(X)
-            for p in bkg_processes
-        )
+        return sum((xs[p] / total_bkg_xs) * pdfs[p].pdf(X) for p in bkg_processes)
 
     # 5. Compute likelihood-ratio-based scores
     data = {}
@@ -294,9 +290,6 @@ def generate_toy_data_3class_3D(
         nn_output = np.stack([score1, score2, score_bkg], axis=1)
         nn_output = list(nn_output)
 
-        data[proc] = pd.DataFrame({
-            "NN_output": nn_output,
-            "weight":    weight
-        })
+        data[proc] = pd.DataFrame({"NN_output": nn_output, "weight": weight})
 
     return data

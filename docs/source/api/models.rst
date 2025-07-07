@@ -1,5 +1,5 @@
 gatohep.models
-===========
+==============
 
 .. automodule:: gatohep.models
    :members:
