@@ -128,7 +128,7 @@ def compute_significance_from_hists(h_signal, h_bkg_list):
     S_tensor = tf.constant(S_vals, dtype=tf.float32)
     B_tensor = tf.constant(B_vals, dtype=tf.float32)
     Z_bins = asymptotic_significance(S_tensor, B_tensor)
-    return np.sqrt(np.sum(Z_bins.numpy()**2))
+    return np.sqrt(np.sum(Z_bins.numpy() ** 2))
 
 
 def align_boundary_tracks(history, dist_tol=0.02, gap_max=20):
@@ -158,7 +158,7 @@ def align_boundary_tracks(history, dist_tol=0.02, gap_max=20):
     last_val = np.array(history[0] + [np.nan] * (n_tracks - len(history[0])))
     last_seen = np.zeros(n_tracks, dtype=int)
 
-    tracks[0, :len(history[0])] = history[0]
+    tracks[0, : len(history[0])] = history[0]
 
     def add_track():
         nonlocal tracks, last_val, last_seen, n_tracks
@@ -183,9 +183,9 @@ def align_boundary_tracks(history, dist_tol=0.02, gap_max=20):
 
         for cut in list(cuts):
             cand = np.where(
-                (np.isnan(tracks[ep, :])) &
-                (ep - last_seen < gap_max) &
-                (np.abs(last_val - cut) < dist_tol)
+                (np.isnan(tracks[ep, :]))
+                & (ep - last_seen < gap_max)
+                & (np.abs(last_val - cut) < dist_tol)
             )[0]
             if cand.size:
                 t = cand[0]

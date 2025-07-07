@@ -1,5 +1,5 @@
 API Reference
-=============
+===============
 Welcome to gato-hep's documentation! The following modules are contained in the API reference: 
 
 .. toctree::

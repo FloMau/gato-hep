@@ -1,4 +1,5 @@
 import os
+
 import hist
 import matplotlib.pyplot as plt
 import mplhep as hep
@@ -144,11 +145,7 @@ def plot_stacked_histograms(
     handles, labels = ax_main.get_legend_handles_labels()
     ncols = 2 if len(labels) < 6 else 3
     ax_main.legend(
-        loc="upper right",
-        fontsize=18,
-        ncols=ncols,
-        labelspacing=0.4,
-        columnspacing=1.5
+        loc="upper right", fontsize=18, ncols=ncols, labelspacing=0.4, columnspacing=1.5
     )
 
     # Save or return the figure.
@@ -211,7 +208,7 @@ def plot_history(
                 marker="o",
                 markersize=3,
                 color=cmap(t),
-                label=f"Boundary {t+1}",
+                label=f"Boundary {t + 1}",
             )
 
     ax.set_xlabel(x_label, fontsize=22)
@@ -253,7 +250,8 @@ def assign_bins_and_order(model, data, reduce=False, eps=1e-6):
     Returns
     -------
     tuple
-        A tuple containing bin assignments, bin order, significances, and inverse mapping.
+        A tuple containing bin assignments, bin order, significances,
+        and inverse mapping.
     """
     n_cats = model.n_cats
 
@@ -285,10 +283,7 @@ def assign_bins_and_order(model, data, reduce=False, eps=1e-6):
 
         log_probs = []
         for i in range(n_cats):
-            dist = tfd.MultivariateNormalTriL(
-                loc=locs[i],
-                scale_tril=scale_tril[i]
-            )
+            dist = tfd.MultivariateNormalTriL(loc=locs[i], scale_tril=scale_tril[i])
             lp = dist.log_prob(x)  # shape: (n_events,)
             log_probs.append(lp)
         log_probs = tf.stack(log_probs, axis=1)  # shape: (n_events, n_cats)
@@ -302,7 +297,7 @@ def assign_bins_and_order(model, data, reduce=False, eps=1e-6):
 
         # Accumulate yields.
         for i in range(n_cats):
-            mask = (assignments == i)
+            mask = assignments == i
             yield_sum = weights[mask].sum()
             if proc.startswith("signal"):
                 S_yields[i] += yield_sum
@@ -321,7 +316,9 @@ def assign_bins_and_order(model, data, reduce=False, eps=1e-6):
     # Remap bin assignments.
     for proc in bin_assignments:
         orig_assign = bin_assignments[proc]
-        bin_assignments[proc] = np.vectorize(lambda i: new_order_mapping[i])(orig_assign)
+        bin_assignments[proc] = np.vectorize(lambda i: new_order_mapping[i])(
+            orig_assign
+        )
 
     return bin_assignments, order, significances, inv_mapping
 
@@ -360,7 +357,7 @@ def plot_learned_gaussians(
     output_filename,
     conf_level=2.30,
     inv_mapping=None,
-    reduce=False
+    reduce=False,
 ):
     """
     Plot the learned Gaussian components (projected to two dimensions) and the data.
@@ -389,7 +386,7 @@ def plot_learned_gaussians(
     None
     """
     eff_params = model.get_effective_parameters()
-    means = np.array(eff_params["means"])    # shape: (n_cats, dim)
+    means = np.array(eff_params["means"])  # shape: (n_cats, dim)
     scale_tril = np.array(eff_params["scale_tril"])  # shape: (n_cats, dim, dim)
     mixture_weights = eff_params["mixture_weights"]
     n_cats = means.shape[0]
@@ -408,7 +405,7 @@ def plot_learned_gaussians(
         "signal": "tab:red",
         "bkg1": "tab:blue",
         "bkg2": "tab:orange",
-        "bkg3": "tab:cyan"
+        "bkg3": "tab:cyan",
     }
     markers = {"signal": "o", "bkg1": "s", "bkg2": "v", "bkg3": "d"}
     stop = 1000
@@ -423,7 +420,7 @@ def plot_learned_gaussians(
             alpha=0.3,
             label=proc,
             color=colors.get(proc, "gray"),
-            marker=markers.get(proc, "o")
+            marker=markers.get(proc, "o"),
         )
 
     # Plot ellipses for each new bin index.
@@ -440,7 +437,7 @@ def plot_learned_gaussians(
             mean_raw = means[orig]  # shape (2,)
             full_logits = tf.concat([mean_raw, [0.0]], axis=0)  # shape (3,)
             probs3 = tf.nn.softmax(full_logits)  # shape (3,)
-            mu = probs3.numpy()[:-1]    # convert to numpy and pick 2 coords
+            mu = probs3.numpy()[:-1]  # convert to numpy and pick 2 coords
 
         else:
             mu = tf.nn.softmax(means[orig]).numpy()[[dim_x, dim_y]]
@@ -457,13 +454,20 @@ def plot_learned_gaussians(
         label = f"Gaussian {new_bin}"
         # Optionally, scale transparency with the mixture weight.
         alpha = max(0.3, mixture_weights[orig] / np.max(mixture_weights))
-        linestyle = linestyles[new_bin//n_colors]
+        linestyle = linestyles[new_bin // n_colors]
         edgecolor = colors[new_bin]
 
         ellipse = Ellipse(
-            xy=mu, width=width, height=height, angle=angle,
+            xy=mu,
+            width=width,
+            height=height,
+            angle=angle,
             linestyle=linestyle,
-            edgecolor=edgecolor, fc='none', lw=3, label=label, alpha=alpha
+            edgecolor=edgecolor,
+            fc="none",
+            lw=3,
+            label=label,
+            alpha=alpha,
         )
         ax.add_patch(ellipse)
 
@@ -503,22 +507,27 @@ def visualize_bins_2d(data_dict, var_label, n_bins, path_plot):
         all_bins = []
         for df in data_dict.values():
             arr = np.vstack(df[var_label].to_numpy())[:10000]
-            bins = df['bin_index'].to_numpy()[:10000]
+            bins = df["bin_index"].to_numpy()[:10000]
             all_scores.append(arr)
             all_bins.append(bins)
         scores = np.vstack(all_scores)
         bins = np.concatenate(all_bins)
 
-        cmap = plt.cm.get_cmap('tab20', n_bins)
+        cmap = plt.cm.get_cmap("tab20", n_bins)
         fig, ax = plt.subplots(figsize=(8, 6))
         ax.scatter(
-            scores[:, dims[0]], scores[:, dims[1]],
-            c=bins, cmap=cmap, vmin=0, vmax=n_bins - 1,
-            s=10, alpha=0.2
+            scores[:, dims[0]],
+            scores[:, dims[1]],
+            c=bins,
+            cmap=cmap,
+            vmin=0,
+            vmax=n_bins - 1,
+            s=10,
+            alpha=0.2,
         )
 
         # Legend proxies
-        proxies = [Patch(color=cmap(k), label=f'Bin {k}') for k in range(n_bins)]
+        proxies = [Patch(color=cmap(k), label=f"Bin {k}") for k in range(n_bins)]
         ax.legend(
             fontsize=14, handles=proxies, ncol=2, labelspacing=0.2, columnspacing=0.5
         )
@@ -575,14 +584,14 @@ def plot_bin_boundaries_simplex(
     os.makedirs(os.path.dirname(path_plot), exist_ok=True)
 
     # 1) Build color list from current cycle + tab colors
-    base = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    base = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     tab = ["tab:olive", "tab:cyan", "tab:green", "tab:pink", "tab:brown", "black"]
     needed = model.n_cats - (len(base) + len(tab))
     extra = [] if needed < 1 else get_distinct_colors(needed)
-    colors = (base + tab + extra)[:model.n_cats]
+    colors = (base + tab + extra)[: model.n_cats]
 
     cmap = ListedColormap(colors)
-    bounds = np.arange(model.n_cats+1) - 0.5
+    bounds = np.arange(model.n_cats + 1) - 0.5
     norm = BoundaryNorm(bounds, model.n_cats)
 
     # 2) Extract GMM params
@@ -592,7 +601,7 @@ def plot_bin_boundaries_simplex(
 
     raw_means = model.means.numpy()[bin_order]
     if model.dim == 1:
-        mus = expit(raw_means.flatten())[:,None]
+        mus = expit(raw_means.flatten())[:, None]
     # elif sigmoid:
     #     mus = tf.math.sigmoid(raw_means).numpy()
     if reduce:
@@ -602,26 +611,26 @@ def plot_bin_boundaries_simplex(
         full_logits = tf.concat([raw_means, zeros], axis=1)  # (n_cats, 3)
         probs = tf.nn.softmax(full_logits, axis=1).numpy()  # (n_cats,3)
         # take first two coords as 2D location
-        mus = probs[:, :model.dim]                          # (n_cats,2)
+        mus = probs[:, : model.dim]  # (n_cats,2)
     else:
         mus = tf.nn.softmax(raw_means, axis=1).numpy()
 
     scales = model.get_scale_tril().numpy()[bin_order]
-    covs = np.einsum('kij,kpj->kip', scales, scales)
+    covs = np.einsum("kij,kpj->kip", scales, scales)
 
     # 3) Loop over 2D faces
-    for (i,j) in [(0,1),(0,2),(1,2)]:
-        k = ({0,1,2} - {i,j}).pop()
+    for i, j in [(0, 1), (0, 2), (1, 2)]:
+        k = ({0, 1, 2} - {i, j}).pop()
 
-        xs = np.linspace(0,1,resolution)
-        ys = np.linspace(0,1,resolution)
+        xs = np.linspace(0, 1, resolution)
+        ys = np.linspace(0, 1, resolution)
         X, Y = np.meshgrid(xs, ys)
-        mask = (X+Y <= 1.0)
+        mask = X + Y <= 1.0
 
-        pts = np.zeros((mask.sum(),3))
-        pts[:,i] = X[mask]
-        pts[:,j] = Y[mask]
-        pts[:,k] = 1.0 - pts[:,i] - pts[:,j]
+        pts = np.zeros((mask.sum(), 3))
+        pts[:, i] = X[mask]
+        pts[:, j] = Y[mask]
+        pts[:, k] = 1.0 - pts[:, i] - pts[:, j]
 
         if reduce:
             pts = pts[:, :-1]
@@ -630,35 +639,47 @@ def plot_bin_boundaries_simplex(
         logps = np.zeros((pts.shape[0], model.n_cats))
         for idx in range(model.n_cats):
             rv = multivariate_normal(mean=mus[idx], cov=covs[idx], allow_singular=True)
-            logps[:,idx] = np.log(weights[idx]+1e-12) + rv.logpdf(pts)
+            logps[:, idx] = np.log(weights[idx] + 1e-12) + rv.logpdf(pts)
 
         assign = np.full(X.shape, np.nan)
         assign_vals = np.argmax(logps, axis=1)
         assign[mask] = assign_vals
 
         # plotting
-        fig, ax = plt.subplots(figsize=(8,6))
+        fig, ax = plt.subplots(figsize=(8, 6))
         ax.contourf(X, Y, assign, levels=bounds, cmap=cmap, norm=norm, alpha=0.6)
-        ax.contour(X, Y, assign, levels=bounds, colors='k', linewidths=0.8)
+        ax.contour(X, Y, assign, levels=bounds, colors="k", linewidths=0.8)
 
         # bin labels
         for b in range(model.n_cats):
             xi = X[assign == b]
             yi = Y[assign == b]
             if xi.size:
-                ax.text(xi.mean(), yi.mean(), str(b),
-                        color=colors[b], fontsize=16,
-                        fontweight='bold', ha='center', va='center')
+                ax.text(
+                    xi.mean(),
+                    yi.mean(),
+                    str(b),
+                    color=colors[b],
+                    fontsize=16,
+                    fontweight="bold",
+                    ha="center",
+                    va="center",
+                )
 
         # legend
         proxies = [
-            plt.Rectangle((0,0),1,1, color=colors[b]) for b in range(model.n_cats)
+            plt.Rectangle((0, 0), 1, 1, color=colors[b]) for b in range(model.n_cats)
         ]
-        ax.legend(proxies, [f"Bin {b}" for b in range(model.n_cats)],
-                  ncol=2, fontsize=16, loc='upper right')
+        ax.legend(
+            proxies,
+            [f"Bin {b}" for b in range(model.n_cats)],
+            ncol=2,
+            fontsize=16,
+            loc="upper right",
+        )
 
-        ax.set_xlim(0,1)
-        ax.set_ylim(0,1)
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
         ax.set_xlabel(f"Discriminant node {i}", fontsize=18)
         ax.set_ylabel(f"Discriminant node {j}", fontsize=18)
 
@@ -712,7 +733,7 @@ def plot_yield_vs_uncertainty(
     B_sorted = np.asarray(B_sorted)
     rel_unc_sorted = np.asarray(rel_unc_sorted)
     bins = np.arange(len(B_sorted))
-    width = 0.4             # bar width
+    width = 0.4  # bar width
     fontsize = 22
 
     # default styles
@@ -773,8 +794,8 @@ def plot_significance_comparison(
     fig, ax = plt.subplots(figsize=fig_size)
 
     # pick distinct markers for baseline vs. optimized:
-    base_style = {"marker": 'o', "linestyle": '-'}
-    opt_style = {"marker": 's', "linestyle": '--'}
+    base_style = {"marker": "o", "linestyle": "-"}
+    opt_style = {"marker": "s", "linestyle": "--"}
 
     for sig in baseline_results:
         # get sorted bins & values
@@ -790,8 +811,8 @@ def plot_significance_comparison(
     ax.set_xlabel("Number of bins", fontsize=22)
     ax.set_ylabel("Significance", fontsize=22)
     ax.legend(fontsize=14)
-    ax.set_xlim(0, max(ax.get_xlim()[1], max(b_bins.max(), o_bins.max())*1.05))
-    ax.set_ylim(0, ax.get_ylim()[1]*1.05)
+    ax.set_xlim(0, max(ax.get_xlim()[1], max(b_bins.max(), o_bins.max()) * 1.05))
+    ax.set_ylim(0, ax.get_ylim()[1] * 1.05)
 
     plt.tight_layout()
     fig.savefig(output_filename)
@@ -822,35 +843,37 @@ def plot_gmm_1d(model, output_filename, x_range=(0.0, 1.0), n_points=10000):
 
     # 2) extract params
     eff = model.get_effective_parameters()
-    weights = np.array(eff["mixture_weights"])    # (K,)
-    raw_means = np.array(eff["means"])            # (K,1)
-    scales = np.array(eff["scale_tril"])[:,0,0]    # (K,)
+    weights = np.array(eff["mixture_weights"])  # (K,)
+    raw_means = np.array(eff["means"])  # (K,1)
+    scales = np.array(eff["scale_tril"])[:, 0, 0]  # (K,)
 
     # 3) activate means into [0,1]
     mus = expit(raw_means.flatten())
 
     # 4) pick colors
-    base = plt.rcParams['axes.prop_cycle'].by_key()['color']
-    tab = ["tab:olive","tab:cyan","tab:green","tab:pink","tab:brown","black"]
+    base = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    tab = ["tab:olive", "tab:cyan", "tab:green", "tab:pink", "tab:brown", "black"]
     needed = model.n_cats - (len(base) + len(tab))
     extra = [] if needed < 1 else get_distinct_colors(needed)
-    colors = (base + tab + extra)[:model.n_cats]
+    colors = (base + tab + extra)[: model.n_cats]
 
     # 5) plot each component
-    fig, ax = plt.subplots(figsize=(8,6))
+    fig, ax = plt.subplots(figsize=(8, 6))
     for i, (w, mu, sigma, c) in enumerate(zip(weights, mus, scales, colors)):
         pdf = w * norm.pdf(x, loc=mu, scale=sigma)
         ax.plot(x, pdf, color=c, linewidth=3, label=f"Comp. {i}")
 
     ax.set_xlim(*x_range)
-    ax.set_ylim(0, 1.2*ax.get_ylim()[1])
+    ax.set_ylim(0, 1.2 * ax.get_ylim()[1])
     ax.set_xlabel("x", fontsize=22)
     ax.set_ylabel("Weighted PDF", fontsize=22)
     ax.legend(
-        loc="upper right", fontsize=16, ncol=3,
-        labelspacing=0.2,     # vertical space between entries
-        columnspacing=0.4,    # horizontal space between columns
-        handlelength=1.0      # length of the legend lines
+        loc="upper right",
+        fontsize=16,
+        ncol=3,
+        labelspacing=0.2,  # vertical space between entries
+        columnspacing=0.4,  # horizontal space between columns
+        handlelength=1.0,  # length of the legend lines
     )
     plt.tight_layout()
     fig.savefig(output_filename)

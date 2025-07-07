@@ -1,5 +1,5 @@
 gatohep.losses
-===========
+==============
 
 .. automodule:: gatohep.losses
    :members:
