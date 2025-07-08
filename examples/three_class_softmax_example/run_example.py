@@ -18,9 +18,10 @@ from gatohep.plotting_utils import (
     plot_yield_vs_uncertainty,
 )
 from gatohep.utils import (
+    TemperatureScheduler,
     asymptotic_significance,
     compute_significance_from_hists,
-    create_hist,
+    create_hist
 )
 
 tfd = tfp.distributions
@@ -108,7 +109,7 @@ def main():
     )
     tensor_data = convert_data_to_tensors(data)
 
-    # ---------- dataset plots (only 2 dims kept)
+    # dataset plots (only 2 dims kept)
     # plot to show dataset
     for dim in range(3):              # show 0, 1 and 2
         _h = {}
@@ -132,7 +133,7 @@ def main():
                 axis_labels=(f"soft-max dim {dim}", "Events"),
             )
 
-    # ---------- baseline (same as before)
+    # argmax-classification as comparison
     baseline_results = {'signal1':{}, 'signal2':{}}
     for nb in [2, 5, 10]:
         h_sig1 = None
@@ -173,7 +174,7 @@ def main():
                 lbl2.append(p)
         baseline_results['signal2'][nb] = compute_significance_from_hists(h_sig2,bkg2)
 
-    # ---------- GATO optimisation
+    # GATO optimisation below
     gato_results = {'signal1':{}, 'signal2':{}}
     path_gato = os.path.join(path_plots, "gato")
     os.makedirs(path_gato, exist_ok=True)
@@ -191,11 +192,21 @@ def main():
             opt.apply_gradients(zip(g, model.trainable_variables))
             return loss
 
-        model = gato_2D(n_cats=n_cats, temperature=0.5)
+        model = gato_2D(n_cats=n_cats, temperature=1.0)
         optimizer = tf.keras.optimizers.Adam(0.02)
+
+        # temperature scheduler
+        scheduler = TemperatureScheduler(
+            model,
+            t_initial=1.0,
+            t_final=0.05,
+            total_epochs=args.epochs,
+            mode="cosine", # or "exponential"
+        )
 
         loss_history = []
         for ep in range(args.epochs):
+            scheduler.update(ep)
             loss = train_step(
                 model, tensor_data, optimizer,
                 args.lam_yield, args.lam_unc,
@@ -204,6 +215,10 @@ def main():
             if ep % 10 == 0:
                 print(f"[{ep:03d}] loss = {loss.numpy():.3f}")
             loss_history.append(loss.numpy())
+
+        # check bias due to finite temperature in training
+        bias = model.get_bias(tensor_data)
+        print(f"T = {model.temperature:4.2f};  per-bin bias: {bias}")
 
         # ---- bin assignment
         data_2d = {}

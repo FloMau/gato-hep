@@ -3,6 +3,78 @@ import numpy as np
 import tensorflow as tf
 
 
+class TemperatureScheduler:
+    r"""
+    Anneal a GATO model's ``temperature`` variable during training.
+
+    Parameters
+    ----------
+    model : gato_gmm_model
+        The model whose ``temperature`` (tf.Variable) is updated in-place.
+    t_initial : float
+        Temperature at epoch 0.
+    t_final : float
+        Temperature at `total_epochs`.
+    total_epochs : int
+        Number of epochs that constitute one full annealing cycle.
+    mode : {"exponential", "cosine"}, optional
+        * **"exponential"** - geometric decay
+          :math:`T_e = T_0 (T_f/T_0)^{e/E}`
+        * **"cosine"** - half-cosine schedule
+          :math:`T_e = T_f + 0.5\,(T_0 - T_f)\,[1+\cos(\pi e/E)]`
+    verbose : bool, optional
+        If *True*, prints the new temperature each epoch.
+
+    Notes
+    -----
+    Call :py:meth:`update` **once per epoch** (or more often, if desired).
+    """
+
+    def __init__(
+        self,
+        model,
+        t_initial=1.0,
+        t_final=0.01,
+        *,
+        total_epochs=100,
+        mode="exponential",
+        verbose=False,
+    ):
+        self.model = model
+        self.t0 = float(t_initial)
+        self.tf = float(t_final)
+        self.E = int(total_epochs)
+        self.mode = mode.lower()
+        self.verbose = verbose
+
+        if self.mode not in ("exponential", "cosine"):
+            raise ValueError("mode must be 'exponential' or 'cosine'")
+
+    def _schedule(self, epoch: int) -> float:
+        """Return temperature for epoch *epoch* based on the selected mode."""
+        tau = epoch / max(1, self.E)  # normalised 0 -> 1
+        if self.mode == "exponential":
+            return self.t0 * (self.tf / self.t0) ** tau
+        # cosine
+        return self.tf + 0.5 * (self.t0 - self.tf) * (1 + np.cos(np.pi * tau))
+
+    def update(self, epoch: int):
+        """Update ``model.temperature`` for the given epoch index."""
+        new_T = self._schedule(epoch)
+
+        # Works for both tf.Variable *and* plain float
+        if hasattr(self.model, "temperature"):
+            if "Variable" in type(self.model.temperature).__name__:
+                self.model.temperature.assign(new_T)  # tf.Variable case
+            else:
+                self.model.temperature = float(new_T)  # plain float attribute
+        else:
+            raise AttributeError("Model has no attribute 'temperature'.")
+
+        if self.verbose:
+            print(f"[TempScheduler-{self.mode}] epoch {epoch:3d} -> T = {new_T:.4f}")
+
+
 def df_dict_to_tensors(data_dict):
     """
     Convert a dictionary of DataFrames to a dictionary of tensors.

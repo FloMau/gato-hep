@@ -5,3 +5,5 @@ __pycache__/
 *.zip
 old*
 *egg-info/
+docs/build/
+**/Plots
