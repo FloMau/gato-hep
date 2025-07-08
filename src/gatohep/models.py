@@ -40,7 +40,7 @@ class gato_gmm_model(tf.Module):
           ``dim + 1`` logits, so every mean lies on the *dim*-simplex
           Recommended for softmax-classifier outputs.
         * ``"sigmoid"`` - Raw means are transformed with a component-wise
-          sigmoid and then *linearly scaled* into ``mean_range``.  
+          sigmoid and then *linearly scaled* into ``mean_range``.
           Recommended for a feature space e.g. spanned by mutliple 1D discriminants.
           The range of each component can be customized with
           the `mean_range` parameter.

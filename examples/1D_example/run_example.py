@@ -25,6 +25,7 @@ from gatohep.plotting_utils import (
     plot_yield_vs_uncertainty,
 )
 from gatohep.utils import (
+    TemperatureScheduler,
     align_boundary_tracks,
     asymptotic_significance,
     compute_significance_from_hists,
@@ -225,7 +226,7 @@ def main():
         log=True
     )
 
-    # --- Fixed binning significance ---
+    # Fixed binning significance
     for nbins in equidistant_binning_options:
         nbins_hist = hist_signal.axes[0].size
         factor = int(nbins_hist / nbins)
@@ -268,13 +269,9 @@ def main():
 
         @tf.function
         def train_step(
-            model,
-            tensor_data,
-            optimizer,
-            lam_yield=0.0,
-            lam_unc=0.0,
-            threshold_yield=5,
-            rel_threshold_unc=0.2
+            model, tensor_data, optimizer,
+            lam_yield=0.0, lam_unc=0.0,
+            threshold_yield=5, rel_threshold_unc=0.2
         ):
             with tf.GradientTape() as tape:
                 # assume your call() now returns (loss, B, B_sumsq)
@@ -284,16 +281,23 @@ def main():
                 penalty_unc = high_bkg_uncertainty_penalty(
                     B_sumw2, B, rel_threshold=rel_threshold_unc
                 )
-
-                # you can give them different weights
                 total_loss = loss + lam_yield*penalty_yield + lam_unc*penalty_unc
             grads = tape.gradient(total_loss, model.trainable_variables)
             optimizer.apply_gradients(zip(grads, model.trainable_variables))
             return total_loss, loss, penalty_yield, penalty_unc
 
         # --- Optimization: create a model instance with n_cats = nbins ---
-        model = gato_1D(n_cats=nbins, temperature=0.5)
+        model = gato_1D(n_cats=nbins, temperature=1.0)
         optimizer = tf.keras.optimizers.Adam(learning_rate=0.01, beta_1=0.9)
+
+        # temperature scheduler
+        scheduler = TemperatureScheduler(
+            model,
+            t_initial=1.0,
+            t_final=0.05,
+            total_epochs=args.epochs,
+            mode="cosine", # or "exponential"
+        )
 
         loss_history = []
         penalty_yield_history = []
@@ -307,6 +311,8 @@ def main():
                 model, tensor_data, optimizer, lam_yield=lam_yield,
                 lam_unc=lam_unc, threshold_yield=yield_thr, rel_threshold_unc=unc_thr
             )
+
+            scheduler.update(epoch)
 
             # Save the history
             loss_history.append(loss.numpy())
@@ -325,7 +331,7 @@ def main():
                     base_loss={loss.numpy():.3f}"
                 )
                 print("Effective boundaries:", model.get_effective_boundaries_1d())
-            # save the trained GATO model
+        # save the trained GATO model
         checkpoint_dir = os.path.join(path_plots, f"checkpoints/{nbins}_bins")
         os.makedirs(checkpoint_dir, exist_ok=True)
         model.save(checkpoint_dir)

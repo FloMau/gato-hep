@@ -35,6 +35,8 @@ line-length = 88
 extend-select = [
   "B",           # flake8-bugbear
   "I",           # isort
+  "W",           # flake8-warnings
+  "E" ,          # flake8-errors
   "ARG",         # flake8-unused-arguments
   "C4",          # flake8-comprehensions
   "EM",          # flake8-errmsg
@@ -53,8 +55,10 @@ extend-select = [
   "YTT",         # flake8-2020
 ]
 ignore = [
-  "PLR",    # Design related pylint codes
-  "RUF012", # Would require a lot of ClassVar's
+  "PLR",
+  "RUF012",
+  "EM101",
+  "T201"
 ]
 
 [project.optional-dependencies]
