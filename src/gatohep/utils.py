@@ -75,6 +75,37 @@ class TemperatureScheduler:
             print(f"[TempScheduler-{self.mode}] epoch {epoch:3d} -> T = {new_T:.4f}")
 
 
+class SteepnessScheduler(TemperatureScheduler):
+    """
+    Anneal every ``cfg["k"]`` in a ``gato_sigmoid_model``.
+
+    Inherits all arguments from ``TemperatureScheduler`` but updates the
+    *steepness* parameters stored in ``model.var_cfg[j]["k"]``.
+
+    Notes
+    -----
+    * Call :py:meth:`update(epoch)` once per epoch, exactly like the
+      TemperatureScheduler.
+    * Works whether each ``k`` is a ``tf.Variable`` or a plain float.
+    """
+
+    def update(self, epoch: int):
+        new_k = self._schedule(epoch)
+
+        # loop over every discriminant in the model
+        for cfg in self.model.var_cfg:
+            k_var = cfg["k"]
+            if "Variable" in type(k_var).__name__:  # tf.Variable
+                k_var.assign(new_k)
+            else:  # plain float
+                cfg["k"] = float(new_k)
+
+        if self.verbose:
+            print(
+                f"[SteepnessScheduler-{self.mode}] epoch {epoch:3d} -> k = {new_k:.4f}"
+            )
+
+
 def df_dict_to_tensors(data_dict):
     """
     Convert a dictionary of DataFrames to a dictionary of tensors.
