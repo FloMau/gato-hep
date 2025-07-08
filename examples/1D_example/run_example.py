@@ -1,6 +1,5 @@
 import argparse
 import os
-
 import hist
 import numpy as np
 import tensorflow as tf
@@ -338,6 +337,10 @@ def main():
         # Rebuild optimized histograms using effective boundaries
         eff_boundaries = model.get_effective_boundaries_1d()
         print(f"Optimized boundaries for {nbins} bins: {eff_boundaries}")
+
+        # check bias due to finite temperature in training
+        bias = model.get_bias(tensor_data)
+        print(f"T = {model.temperature:4.2f};  per-bin bias: {bias}")
 
         opt_bin_edges = np.concatenate(([low], np.array(eff_boundaries), [high]))
         h_signal_opt = create_hist(
