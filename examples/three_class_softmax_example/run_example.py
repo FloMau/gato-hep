@@ -10,7 +10,7 @@ from gatohep.models import gato_gmm_model
 from gatohep.plotting_utils import (
     assign_bins_and_order,
     fill_histogram_from_assignments,
-    plot_bin_boundaries_simplex,
+    plot_bin_boundaries_2D,
     plot_history,
     plot_learned_gaussians,
     plot_significance_comparison,
@@ -249,14 +249,12 @@ def main():
             data=data, model=model, dim_x=0, dim_y=1,
             output_filename=os.path.join(path_gato, f"Gaussians_{n_cats}bins.pdf"),
             inv_mapping=inv,
-            reduce=True,
         )
 
-        plot_bin_boundaries_simplex(
+        plot_bin_boundaries_2D(
             model,
             order,
-            path_plot=os.path.join(path_gato, f"Bin_boundaries_{n_cats}_bins.pdf"),
-            reduce=True
+            path_plot=os.path.join(path_gato, f"Bin_boundaries_{n_cats}_bins.pdf")
         )
 
         # loss curve

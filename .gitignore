@@ -7,3 +7,4 @@ old*
 *egg-info/
 docs/build/
 **/Plots
+**/PlotsSigmoidModel/
