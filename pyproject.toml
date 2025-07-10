@@ -62,7 +62,7 @@ ignore = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov"]
+dev = ["pytest", "pytest-cov", "flake8"]
 docs = [
   "sphinx>=5.0",
   "sphinx-rtd-theme",
