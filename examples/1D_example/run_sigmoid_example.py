@@ -1,20 +1,10 @@
 import argparse
-import os
-import hist
-import numpy as np
-import tensorflow as tf
-import tensorflow_probability as tfp
-
-tfd = tfp.distributions
-
-# Import from the installed/packaged gato modules
 from gatohep.data_generation import generate_toy_data_1D
 from gatohep.losses import (
     high_bkg_uncertainty_penalty,
     low_bkg_penalty,
 )
 from gatohep.models import gato_sigmoid_model
-
 from gatohep.plotting_utils import (
     plot_history,
     plot_significance_comparison,
@@ -28,6 +18,14 @@ from gatohep.utils import (
     create_hist,
     df_dict_to_tensors,
 )
+import hist
+import numpy as np
+import os
+import tensorflow as tf
+import tensorflow_probability as tfp
+
+tfd = tfp.distributions
+
 
 # Define the 1D GATO model using sigmoid boundaries
 class gato_1D(gato_sigmoid_model):
@@ -73,43 +71,41 @@ class gato_1D(gato_sigmoid_model):
         bkg_w2 : tf.Tensor (n_cats,)
             Sum of squared weights per bin for the background.
         """
-        gamma = self.get_probs(data_dict)             # soft assignments
+        gamma = self.get_probs(data_dict)  # soft assignments
 
         sig_yield = tf.zeros(self.n_cats, tf.float32)
         bkg_yield = tf.zeros(self.n_cats, tf.float32)
         bkg_sumw2 = tf.zeros(self.n_cats, tf.float32)
 
         for proc, g in gamma.items():
-            w  = data_dict[proc]["weight"]
-            w2 = w ** 2
+            w = data_dict[proc]["weight"]
+            w2 = w**2
 
-            y  = tf.reduce_sum(g * w[:, None],  axis=0)
+            y = tf.reduce_sum(g * w[:, None], axis=0)
             y2 = tf.reduce_sum(g * w2[:, None], axis=0)
 
             if proc.startswith("signal"):
                 sig_yield += y
             else:
-                bkg_yield  += y
+                bkg_yield += y
                 bkg_sumw2 += y2
 
         # Asimov per-bin + quadrature
-        loss = - tf.sqrt(
-            tf.reduce_sum(
-                asymptotic_significance(sig_yield, bkg_yield) ** 2
-            )
+        loss = -tf.sqrt(
+            tf.reduce_sum(asymptotic_significance(sig_yield, bkg_yield) ** 2)
         )
         return loss, bkg_yield, bkg_sumw2
 
 
-
 # main: Generate data, run fixed binning and optimization, then compare.
 def main():
-
     parser = argparse.ArgumentParser(description="1-D GATO optimisation on toy data")
-    parser.add_argument("--epochs",
-                        type=int,
-                        default=250,
-                        help="number of training epochs (default: 250)")
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=250,
+        help="number of training epochs (default: 250)",
+    )
 
     parser.add_argument(
         "--gato-bins",
@@ -117,21 +113,21 @@ def main():
         nargs="+",
         default=[3, 5, 10],
         metavar="N",
-        help="List of target bin counts for the GATO run (default: 3,5,10)"
+        help="List of target bin counts for the GATO run (default: 3,5,10)",
     )
 
     parser.add_argument(
         "--lam-yield",
         type=float,
         default=0.0,
-        help=r"lambda for the low-background-yield penalty (default: 0)"
+        help=r"lambda for the low-background-yield penalty (default: 0)",
     )
 
     parser.add_argument(
         "--lam-unc",
         type=float,
         default=0.0,
-        help=r"lambda for the high-uncertainty penalty (default: 0)"
+        help=r"lambda for the high-uncertainty penalty (default: 0)",
     )
 
     parser.add_argument(
@@ -139,7 +135,7 @@ def main():
         type=float,
         default=5.0,
         help="Threshold (events) below which the low-yield "
-        "penalty turns on (default: 10)"
+        "penalty turns on (default: 10)",
     )
 
     parser.add_argument(
@@ -147,21 +143,21 @@ def main():
         type=float,
         default=0.20,
         help="Relative uncertainty above which the uncertainty "
-        "penalty turns on (default: 0.20)"
+        "penalty turns on (default: 0.20)",
     )
 
     parser.add_argument(
         "--n-bkg",
         type=int,
         default=300000,
-        help="Total number of background events to generate."
+        help="Total number of background events to generate.",
     )
 
     parser.add_argument(
         "--out",
         type=str,
         default="PlotsSigmoidModel",
-        help="Suffix for the output directory. Default: \"Plots\""
+        help='Suffix for the output directory. Default: "Plots"',
     )
 
     args = parser.parse_args()
@@ -178,9 +174,12 @@ def main():
     data = generate_toy_data_1D(
         n_signal=100000,
         n_bkg=n_bkg,
-        xs_signal=0.5, xs_bkg1=50, xs_bkg2=15, xs_bkg3=10,  # in pb
+        xs_signal=0.5,
+        xs_bkg1=50,
+        xs_bkg2=15,
+        xs_bkg3=10,  # in pb
         lumi=100,  # in /fb
-        seed=42
+        seed=42,
     )
 
     # Create fixed histograms, will be rebinned afterwards
@@ -193,7 +192,7 @@ def main():
         bins=n_bins,
         low=low,
         high=high,
-        name="Signal"
+        name="Signal",
     )
     hist_bkg1 = create_hist(
         data["bkg1"]["NN_output"],
@@ -201,7 +200,7 @@ def main():
         bins=n_bins,
         low=low,
         high=high,
-        name="Bkg1"
+        name="Bkg1",
     )
     hist_bkg2 = create_hist(
         data["bkg2"]["NN_output"],
@@ -209,7 +208,7 @@ def main():
         bins=n_bins,
         low=low,
         high=high,
-        name="Bkg2"
+        name="Bkg2",
     )
     hist_bkg3 = create_hist(
         data["bkg3"]["NN_output"],
@@ -217,7 +216,7 @@ def main():
         bins=n_bins,
         low=low,
         high=high,
-        name="Bkg3"
+        name="Bkg3",
     )
     bkg_hists = [hist_bkg1, hist_bkg2, hist_bkg3]
 
@@ -234,32 +233,32 @@ def main():
     os.makedirs(path_plots, exist_ok=True)
     fixed_plot_filename = path_plots + "toy_data.pdf"
     plot_stacked_histograms(
-        stacked_hists=[bkg_hist[::hist.rebin(30)] for bkg_hist in bkg_hists],
+        stacked_hists=[bkg_hist[:: hist.rebin(30)] for bkg_hist in bkg_hists],
         process_labels=process_labels,
-        signal_hists=[hist_signal[::hist.rebin(30)] * 100],
+        signal_hists=[hist_signal[:: hist.rebin(30)] * 100],
         signal_labels=signal_labels,
         output_filename=fixed_plot_filename,
         axis_labels=("Toy discriminant", "Events"),
         normalize=False,
-        log=False
+        log=False,
     )
     plot_stacked_histograms(
-        stacked_hists=[bkg_hist[::hist.rebin(30)] for bkg_hist in bkg_hists],
+        stacked_hists=[bkg_hist[:: hist.rebin(30)] for bkg_hist in bkg_hists],
         process_labels=process_labels,
-        signal_hists=[hist_signal[::hist.rebin(30)] * 100],
+        signal_hists=[hist_signal[:: hist.rebin(30)] * 100],
         signal_labels=signal_labels,
         output_filename=fixed_plot_filename.replace(".pdf", "_log.pdf"),
         axis_labels=("Toy discriminant", "Events"),
         normalize=False,
-        log=True
+        log=True,
     )
 
     # Fixed binning significance
     for nbins in equidistant_binning_options:
         nbins_hist = hist_signal.axes[0].size
         factor = int(nbins_hist / nbins)
-        hist_signal_rb = hist_signal[::hist.rebin(factor)]
-        bkg_hists_rb = [h[::hist.rebin(factor)] for h in bkg_hists]
+        hist_signal_rb = hist_signal[:: hist.rebin(factor)]
+        bkg_hists_rb = [h[:: hist.rebin(factor)] for h in bkg_hists]
 
         Z_equidistant = compute_significance_from_hists(hist_signal_rb, bkg_hists_rb)
         equidistant_significances[nbins] = Z_equidistant
@@ -267,8 +266,9 @@ def main():
             f"Fixed binning ({nbins} bins): Overall significance = {Z_equidistant:.3f}"
         )
 
-        fixed_plot_filename = path_plots + \
-            f"NN_output_distribution_fixed_{nbins}bins.pdf"
+        fixed_plot_filename = (
+            path_plots + f"NN_output_distribution_fixed_{nbins}bins.pdf"
+        )
         plot_stacked_histograms(
             stacked_hists=bkg_hists_rb,
             process_labels=process_labels,
@@ -277,7 +277,7 @@ def main():
             output_filename=fixed_plot_filename,
             axis_labels=("Toy NN output", "Toy events"),
             normalize=False,
-            log=False
+            log=False,
         )
         plot_stacked_histograms(
             stacked_hists=bkg_hists_rb,
@@ -287,7 +287,7 @@ def main():
             output_filename=fixed_plot_filename.replace(".pdf", "_log.pdf"),
             axis_labels=("Toy NN output", "Toy events"),
             normalize=False,
-            log=True
+            log=True,
         )
         print(f"Fixed binning ({nbins} bins) plot saved as {fixed_plot_filename}")
 
@@ -297,9 +297,13 @@ def main():
 
         @tf.function
         def train_step(
-            model, tensor_data, optimizer,
-            lam_yield=0.0, lam_unc=0.0,
-            threshold_yield=5, rel_threshold_unc=0.2
+            model,
+            tensor_data,
+            optimizer,
+            lam_yield=0.0,
+            lam_unc=0.0,
+            threshold_yield=5,
+            rel_threshold_unc=0.2,
         ):
             with tf.GradientTape() as tape:
                 # assume your call() now returns (loss, B, B_sumsq)
@@ -309,7 +313,7 @@ def main():
                 penalty_unc = high_bkg_uncertainty_penalty(
                     B_sumw2, B, rel_threshold=rel_threshold_unc
                 )
-                total_loss = loss + lam_yield*penalty_yield + lam_unc*penalty_unc
+                total_loss = loss + lam_yield * penalty_yield + lam_unc * penalty_unc
             grads = tape.gradient(total_loss, model.trainable_variables)
             optimizer.apply_gradients(zip(grads, model.trainable_variables))
             return total_loss, loss, penalty_yield, penalty_unc
@@ -321,8 +325,8 @@ def main():
         # steepness scheduler
         sched = SteepnessScheduler(
             model,
-            t_initial=50.0,       # starting k
-            t_final=10000.0,      # final k
+            t_initial=50.0,  # starting k
+            t_final=10000.0,  # final k
             total_epochs=args.epochs,
             mode="cosine",  # or "exponential"
             verbose=True,
@@ -333,12 +337,16 @@ def main():
         penalty_unc_history = []
         boundary_history = []
         for epoch in range(epochs):
-            
-            sched.update(epoch)              # adjust all k_j in-place
+            sched.update(epoch)  # adjust all k_j in-place
 
             total_loss, loss, penalty_yield, penalty_unc = train_step(
-                model, tensor_data, optimizer, lam_yield=lam_yield,
-                lam_unc=lam_unc, threshold_yield=yield_thr, rel_threshold_unc=unc_thr
+                model,
+                tensor_data,
+                optimizer,
+                lam_yield=lam_yield,
+                lam_unc=lam_unc,
+                threshold_yield=yield_thr,
+                rel_threshold_unc=unc_thr,
             )
 
             # scheduler.update(epoch)
@@ -347,7 +355,9 @@ def main():
             loss_history.append(loss.numpy())
             penalty_yield_history.append(penalty_yield.numpy())
             penalty_unc_history.append(penalty_unc.numpy())
-            boundary_history.append(model.calculate_boundaries().numpy())  # list(ndarray)
+            boundary_history.append(
+                model.calculate_boundaries().numpy()
+            )  # list(ndarray)
 
             if epoch % 10 == 0 or epoch == epochs - 1:
                 print(
@@ -373,25 +383,25 @@ def main():
             data["signal"]["NN_output"],
             weights=data["signal"]["weight"],
             bins=opt_bin_edges,
-            name="Signal_opt"
+            name="Signal_opt",
         )
         h_bkg1_opt = create_hist(
             data["bkg1"]["NN_output"],
             weights=data["bkg1"]["weight"],
             bins=opt_bin_edges,
-            name="Bkg1_opt"
+            name="Bkg1_opt",
         )
         h_bkg2_opt = create_hist(
             data["bkg2"]["NN_output"],
             weights=data["bkg2"]["weight"],
             bins=opt_bin_edges,
-            name="Bkg2_opt"
+            name="Bkg2_opt",
         )
         h_bkg3_opt = create_hist(
             data["bkg3"]["NN_output"],
             weights=data["bkg3"]["weight"],
             bins=opt_bin_edges,
-            name="Bkg3_opt"
+            name="Bkg3_opt",
         )
         opt_bkg_hists = [h_bkg1_opt, h_bkg2_opt, h_bkg3_opt]
 
@@ -401,8 +411,9 @@ def main():
 
         print(f"Optimized binning ({nbins} bins): Overall significance = {Z_opt:.3f}")
 
-        opt_plot_filename = path_plots + \
-            f"NN_output_distribution_optimized_{nbins}bins.pdf"
+        opt_plot_filename = (
+            path_plots + f"NN_output_distribution_optimized_{nbins}bins.pdf"
+        )
         plot_stacked_histograms(
             stacked_hists=opt_bkg_hists,
             process_labels=process_labels,
@@ -411,7 +422,7 @@ def main():
             output_filename=opt_plot_filename,
             axis_labels=("Toy NN output", "Events"),
             normalize=False,
-            log=False
+            log=False,
         )
 
         plot_stacked_histograms(
@@ -422,7 +433,7 @@ def main():
             output_filename=opt_plot_filename.replace(".pdf", "_log.pdf"),
             axis_labels=("Toy NN output", "Events"),
             normalize=False,
-            log=True
+            log=True,
         )
         print(f"Optimized binning ({nbins} bins) plot saved as {opt_plot_filename}")
 
@@ -461,7 +472,10 @@ def main():
             boundaries=True,
         )
 
-        B, rel_unc, = model.compute_hard_bkg_stats(tensor_data)
+        (
+            B,
+            rel_unc,
+        ) = model.compute_hard_bkg_stats(tensor_data)
         plot_yield_vs_uncertainty(
             B,
             rel_unc,
@@ -471,8 +485,8 @@ def main():
             B,
             rel_unc,
             log=True,
-            output_filename=path_plots +
-            f"yield_vs_uncertainty_{nbins}bins_sorted_log.pdf",
+            output_filename=path_plots
+            + f"yield_vs_uncertainty_{nbins}bins_sorted_log.pdf",
         )
 
     plot_significance_comparison(

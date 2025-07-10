@@ -1,15 +1,12 @@
-import os
-
 import hist
 import matplotlib.pyplot as plt
 import mplhep as hep
 import numpy as np
+import os
 import tensorflow as tf
 import tensorflow_probability as tfp
 from matplotlib.colors import BoundaryNorm, ListedColormap
-from matplotlib.patches import Ellipse, Patch
-from scipy.special import expit
-from scipy.stats import multivariate_normal, norm
+from matplotlib.patches import Ellipse
 
 plt.style.use(hep.style.ROOT)
 tfd = tfp.distributions
@@ -350,124 +347,116 @@ def fill_histogram_from_assignments(assignments, weights, nbins, name="BinAssign
 
 
 def plot_learned_gaussians(
-    data,
+    data: dict,
     model,
-    dim_x,
-    dim_y,
-    output_filename,
-    conf_level=2.30,
-    inv_mapping=None,
-    reduce=False,
+    dim_x: int,
+    dim_y: int,
+    output_filename: str,
+    conf_level: float = 2.30,  # chi2 for 1-sigma in 2 D
+    inv_mapping: dict | None = None,
+    reduce: bool = False,
 ):
     """
-    Plot the learned Gaussian components (projected to two dimensions) and the data.
+    Visualise the learned Gaussian components (2-D projection) together
+    with a scatter of real data points.
 
     Parameters
     ----------
     data : dict
-        Dictionary mapping process names to DataFrames with column "NN_output".
-    model : tf.Module
-        Trained multidimensional model with `get_effective_parameters()`.
-    dim_x : int
-        Dimension to plot on the x-axis.
-    dim_y : int
-        Dimension to plot on the y-axis.
+        ``{process: DataFrame}`` - each DataFrame must contain a column
+        ``"NN_output"`` with arrays of shape (dim,).
+    model : gato_gmm_model
+        Trained multi-D GMM.
+    dim_x, dim_y : int
+        Component of the NN output plotted on x / y axis.
     output_filename : str
-        File name to save the plot.
+        Path where the figure is saved.
     conf_level : float, optional
-        Chi-square threshold for 1-sigma ellipse. Default is 2.30.
+        Chi-square value that defines the ellipse (2.30 -> 1 sigma).
     inv_mapping : dict, optional
-        Mapping from new bin index to original Gaussian index. Default is None.
+        Map new bin index → original component index.  If None,
+        identity mapping is used.
     reduce : bool, optional
-        If True, reduce dimensionality. Default is False.
-
-    Returns
-    -------
-    None
+        If True, map raw mean logits through softmax *per component*
+        before projecting.  (Keeps prior behaviour.)
     """
-    eff_params = model.get_effective_parameters()
-    means = np.array(eff_params["means"])  # shape: (n_cats, dim)
-    scale_tril = np.array(eff_params["scale_tril"])  # shape: (n_cats, dim, dim)
-    mixture_weights = eff_params["mixture_weights"]
+    # 1) pull parameters from helper methods
+    comp = model.get_mixture_pdf().components_distribution
+    means = comp.loc.numpy()  # (k, dim)
+    cov_full = np.matmul(
+        comp.scale_tril.numpy(), np.transpose(comp.scale_tril.numpy(), (0, 2, 1))
+    )  # (k, dim, dim)
+    weights = np.exp(model.get_mixture_weight().numpy())  # (k,)
     n_cats = means.shape[0]
 
-    # If no inverse mapping is provided, use identity.
+    # mapping new->original index
     if inv_mapping is None:
         inv_mapping = {i: i for i in range(n_cats)}
 
-    # Compute covariances.
-    covariances = np.array([np.dot(L, L.T) for L in scale_tril])
-
+    # 2) scatter a subset of the data
     fig, ax = plt.subplots(figsize=(10, 8))
-
-    # Scatter the data.
-    colors = {
+    colours = {
         "signal": "tab:red",
         "bkg1": "tab:blue",
         "bkg2": "tab:orange",
         "bkg3": "tab:cyan",
     }
     markers = {"signal": "o", "bkg1": "s", "bkg2": "v", "bkg3": "d"}
+
     stop = 1000
     for proc, df in data.items():
         arr = np.stack(df["NN_output"].values)
-        x_vals = arr[:, dim_x]
-        y_vals = arr[:, dim_y]
         ax.scatter(
-            x_vals[:stop],
-            y_vals[:stop],
+            arr[:stop, dim_x],
+            arr[:stop, dim_y],
             s=10,
             alpha=0.3,
-            label=proc,
-            color=colors.get(proc, "gray"),
+            color=colours.get(proc, "gray"),
             marker=markers.get(proc, "o"),
+            label=proc,
         )
 
-    # Plot ellipses for each new bin index.
-    # We iterate over new bin indices in ascending order (0 to n_cats-1).
-    prop_cycle = plt.rcParams["axes.prop_cycle"]
-    colors = prop_cycle.by_key()["color"]
+    # 3) ellipses per component
+    prop_cycle = plt.rcParams["axes.prop_cycle"].by_key()
+    base_cols = prop_cycle["color"]
     linestyles = ["solid", "dashed", "dotted", "dashdot"] * 100
-    n_colors = len(colors)
-    colors *= 100
-    for new_bin in range(n_cats):
-        orig = inv_mapping[new_bin]  # Get the original Gaussian index for this new bin.
-        # Project the mean and covariance.
+    colours = (base_cols * 100)[:n_cats]
+
+    for new_idx in range(n_cats):
+        orig = inv_mapping[new_idx]
+
+        # mean projection
         if reduce:
-            mean_raw = means[orig]  # shape (2,)
-            full_logits = tf.concat([mean_raw, [0.0]], axis=0)  # shape (3,)
-            probs3 = tf.nn.softmax(full_logits)  # shape (3,)
-            mu = probs3.numpy()[:-1]  # convert to numpy and pick 2 coords
-
+            # treat raw mean logits as 3-vector on simplex (old behaviour)
+            mean_raw = means[orig]
+            full_logits = tf.concat([mean_raw, [0.0]], axis=0)
+            mu = tf.nn.softmax(full_logits).numpy()[:-1]
         else:
-            mu = tf.nn.softmax(means[orig]).numpy()[[dim_x, dim_y]]
-        cov_proj = covariances[orig][np.ix_([dim_x, dim_y], [dim_x, dim_y])]
-        eigenvals, eigenvecs = np.linalg.eigh(cov_proj)
-        # Sort eigenvalues and eigenvectors in descending order.
-        idx = np.argsort(eigenvals)[::-1]
-        eigenvals = eigenvals[idx]
-        eigenvecs = eigenvecs[:, idx]
-        angle = np.degrees(np.arctan2(eigenvecs[1, 0], eigenvecs[0, 0]))
-        width = 2 * np.sqrt(conf_level * eigenvals[0])
-        height = 2 * np.sqrt(conf_level * eigenvals[1])
-        # Use the new_bin as label.
-        label = f"Gaussian {new_bin}"
-        # Optionally, scale transparency with the mixture weight.
-        alpha = max(0.3, mixture_weights[orig] / np.max(mixture_weights))
-        linestyle = linestyles[new_bin // n_colors]
-        edgecolor = colors[new_bin]
+            mu = means[orig][[dim_x, dim_y]]
 
+        # 2-D covariance slice
+        cov = cov_full[orig][np.ix_([dim_x, dim_y], [dim_x, dim_y])]
+
+        # ellipse parameters
+        eigval, eigvec = np.linalg.eigh(cov)
+        order = np.argsort(eigval)[::-1]
+        eigval, eigvec = eigval[order], eigvec[:, order]
+        angle = np.degrees(np.arctan2(eigvec[1, 0], eigvec[0, 0]))
+        width = 2 * np.sqrt(conf_level * eigval[0])
+        height = 2 * np.sqrt(conf_level * eigval[1])
+
+        alpha = max(0.3, weights[orig] / weights.max())
         ellipse = Ellipse(
             xy=mu,
             width=width,
             height=height,
             angle=angle,
-            linestyle=linestyle,
-            edgecolor=edgecolor,
+            edgecolor=colours[new_idx],
             fc="none",
             lw=3,
-            label=label,
+            linestyle=linestyles[new_idx],
             alpha=alpha,
+            label=f"Gaussian {new_idx}",
         )
         ax.add_patch(ellipse)
 
@@ -475,69 +464,10 @@ def plot_learned_gaussians(
     ax.set_ylabel(f"Dimension {dim_y}", fontsize=18)
     ax.set_xlim(-0.3, 1.3)
     ax.set_ylim(-0.3, 1.3)
-    ax.legend(fontsize=14, ncol=3, labelspacing=0.2, columnspacing=0.5)
+    ax.legend(fontsize=12, ncol=3)
     plt.tight_layout()
     plt.savefig(output_filename)
     plt.close(fig)
-
-
-def visualize_bins_2d(data_dict, var_label, n_bins, path_plot):
-    """
-    Visualize 2D scatter plots of points colored by bin assignments.
-
-    Parameters
-    ----------
-    data_dict : dict
-        Dictionary of input data with process names as keys.
-    var_label : str
-        Label for the variable to plot.
-    n_bins : int
-        Number of bins.
-    path_plot : str
-        File path to save the plot.
-
-    Returns
-    -------
-    None
-    """
-    dims_list = [(0, 1), (0, 2), (1, 2)]
-    for dims in dims_list:
-        # Gather all scores and bin indices
-        all_scores = []
-        all_bins = []
-        for df in data_dict.values():
-            arr = np.vstack(df[var_label].to_numpy())[:10000]
-            bins = df["bin_index"].to_numpy()[:10000]
-            all_scores.append(arr)
-            all_bins.append(bins)
-        scores = np.vstack(all_scores)
-        bins = np.concatenate(all_bins)
-
-        cmap = plt.cm.get_cmap("tab20", n_bins)
-        fig, ax = plt.subplots(figsize=(8, 6))
-        ax.scatter(
-            scores[:, dims[0]],
-            scores[:, dims[1]],
-            c=bins,
-            cmap=cmap,
-            vmin=0,
-            vmax=n_bins - 1,
-            s=10,
-            alpha=0.2,
-        )
-
-        # Legend proxies
-        proxies = [Patch(color=cmap(k), label=f"Bin {k}") for k in range(n_bins)]
-        ax.legend(
-            fontsize=14, handles=proxies, ncol=2, labelspacing=0.2, columnspacing=0.5
-        )
-
-        ax.set_xlabel(f"Discriminant node {dims[0]}")
-        ax.set_ylabel(f"Discriminant node {dims[1]}")
-
-        fig.tight_layout()
-        fig.savefig(path_plot.replace(".pdf", f"_{dims[0]}_{dims[1]}.pdf"))
-        fig.clf()
 
 
 def get_distinct_colors(n):
@@ -558,32 +488,57 @@ def get_distinct_colors(n):
     return [tuple(rgb[:3]) for rgb in hsv]
 
 
-def plot_bin_boundaries_simplex(
-    model, bin_order, path_plot, reduce=False, resolution=1000
+def plot_bin_boundaries_2D(
+    model,
+    bin_order,
+    path_plot,
+    *,
+    resolution: int = 1000,
+    reduce: bool = False,  # kept for API compatibility, ignored for dim==2
 ):
     """
-    Plot bin boundaries in a 3-simplex for a trained model.
+    Plot hard-bin regions of a *2-D* GMM on the 2-simplex face
+    (x ≥ 0, y ≥ 0, x + y ≤ 1).
 
     Parameters
     ----------
-    model : tf.Module
-        Trained model with Gaussian components.
-    bin_order : list
-        Order of bins for plotting.
+    model : gato_gmm_model   (must have dim == 2)
+    bin_order : list[int]
+        Desired plotting order of the components.
     path_plot : str
-        File path to save the plot.
-    reduce : bool, optional
-        If True, reduce dimensionality. Default is False.
+        Destination file (PDF, PNG, …).
     resolution : int, optional
-        Resolution of the plot grid. Default is 1000.
-
-    Returns
-    -------
-    None
+        Grid resolution per axis.  Default 500.
+    reduce : bool, optional
+        Ignored (for backward compatibility with older callers).
     """
+    if model.dim != 2:
+        raise ValueError("This helper expects a 2D model.")
+
     os.makedirs(os.path.dirname(path_plot), exist_ok=True)
 
-    # 1) Build color list from current cycle + tab colors
+    # 1)  Build triangular grid inside the simplex
+    xs = np.linspace(0.0, 1.0, resolution, dtype=np.float32)
+    ys = np.linspace(0.0, 1.0, resolution, dtype=np.float32)
+    X, Y = np.meshgrid(xs, ys)
+    mask = X + Y <= 1.0  # boolean mask
+    pts = np.stack([X[mask], Y[mask]], axis=-1)  # (P, 2)
+
+    # 2)  Ask the model which bin each point belongs to
+    bin_ids = model.get_bin(tf.constant(pts, dtype=tf.float32)).numpy()  # (P,)
+
+    # Map original bin indices -> desired plotting order
+    #   original index  = bin_ids[i]
+    #   plotting index  = bin_order.index(original)
+    inv_map = np.empty_like(bin_order)
+    for new_idx, orig_idx in enumerate(bin_order):
+        inv_map[orig_idx] = new_idx
+    bin_ids_plot = inv_map[bin_ids]  # (P,)
+
+    assign = np.full(X.shape, np.nan)
+    assign[mask] = bin_ids_plot
+
+    # build color list from current cycle + tab colors
     base = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     tab = ["tab:olive", "tab:cyan", "tab:green", "tab:pink", "tab:brown", "black"]
     needed = model.n_cats - (len(base) + len(tab))
@@ -591,101 +546,48 @@ def plot_bin_boundaries_simplex(
     colors = (base + tab + extra)[: model.n_cats]
 
     cmap = ListedColormap(colors)
-    bounds = np.arange(model.n_cats + 1) - 0.5
-    norm = BoundaryNorm(bounds, model.n_cats)
+    bounds = np.arange(len(bin_order) + 1) - 0.5
+    norm = BoundaryNorm(bounds, len(bin_order))
 
-    # 2) Extract GMM params
-    logits = model.mixture_logits.numpy()[bin_order]
-    weights = np.exp(logits - logits.max())
-    weights /= weights.sum()
+    # 4)  Plot
+    fig, ax = plt.subplots(figsize=(7, 6))
+    ax.contourf(X, Y, assign, levels=bounds, cmap=cmap, norm=norm, alpha=0.6)
+    ax.contour(X, Y, assign, levels=bounds, colors="k", linewidths=0.8)
 
-    raw_means = model.means.numpy()[bin_order]
-    if model.dim == 1:
-        mus = expit(raw_means.flatten())[:, None]
-    # elif sigmoid:
-    #     mus = tf.math.sigmoid(raw_means).numpy()
-    if reduce:
-        zeros = tf.zeros(
-            (tf.shape(raw_means)[0], 1), dtype=raw_means.dtype
-        )  # (n_cats,1)
-        full_logits = tf.concat([raw_means, zeros], axis=1)  # (n_cats, 3)
-        probs = tf.nn.softmax(full_logits, axis=1).numpy()  # (n_cats,3)
-        # take first two coords as 2D location
-        mus = probs[:, : model.dim]  # (n_cats,2)
-    else:
-        mus = tf.nn.softmax(raw_means, axis=1).numpy()
+    # label the middle of each coloured region
+    for b in range(len(bin_order)):
+        xi = X[assign == b]
+        yi = Y[assign == b]
+        if xi.size:
+            ax.text(
+                xi.mean(),
+                yi.mean(),
+                str(b),
+                color=colors[b],
+                fontsize=12,
+                ha="center",
+                va="center",
+            )
 
-    scales = model.get_scale_tril().numpy()[bin_order]
-    covs = np.einsum("kij,kpj->kip", scales, scales)
+    proxies = [
+        plt.Rectangle((0, 0), 1, 1, color=colors[b]) for b in range(len(bin_order))
+    ]
+    ax.legend(
+        proxies,
+        [f"Bin {b}" for b in range(len(bin_order))],
+        fontsize=12,
+        ncol=2,
+        loc="upper right",
+    )
 
-    # 3) Loop over 2D faces
-    for i, j in [(0, 1), (0, 2), (1, 2)]:
-        k = ({0, 1, 2} - {i, j}).pop()
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_xlabel("Discriminant dim. 0", fontsize=24)
+    ax.set_ylabel("Discriminant dim. 1", fontsize=24)
 
-        xs = np.linspace(0, 1, resolution)
-        ys = np.linspace(0, 1, resolution)
-        X, Y = np.meshgrid(xs, ys)
-        mask = X + Y <= 1.0
-
-        pts = np.zeros((mask.sum(), 3))
-        pts[:, i] = X[mask]
-        pts[:, j] = Y[mask]
-        pts[:, k] = 1.0 - pts[:, i] - pts[:, j]
-
-        if reduce:
-            pts = pts[:, :-1]
-
-        # compute log density + log weight
-        logps = np.zeros((pts.shape[0], model.n_cats))
-        for idx in range(model.n_cats):
-            rv = multivariate_normal(mean=mus[idx], cov=covs[idx], allow_singular=True)
-            logps[:, idx] = np.log(weights[idx] + 1e-12) + rv.logpdf(pts)
-
-        assign = np.full(X.shape, np.nan)
-        assign_vals = np.argmax(logps, axis=1)
-        assign[mask] = assign_vals
-
-        # plotting
-        fig, ax = plt.subplots(figsize=(8, 6))
-        ax.contourf(X, Y, assign, levels=bounds, cmap=cmap, norm=norm, alpha=0.6)
-        ax.contour(X, Y, assign, levels=bounds, colors="k", linewidths=0.8)
-
-        # bin labels
-        for b in range(model.n_cats):
-            xi = X[assign == b]
-            yi = Y[assign == b]
-            if xi.size:
-                ax.text(
-                    xi.mean(),
-                    yi.mean(),
-                    str(b),
-                    color=colors[b],
-                    fontsize=16,
-                    fontweight="bold",
-                    ha="center",
-                    va="center",
-                )
-
-        # legend
-        proxies = [
-            plt.Rectangle((0, 0), 1, 1, color=colors[b]) for b in range(model.n_cats)
-        ]
-        ax.legend(
-            proxies,
-            [f"Bin {b}" for b in range(model.n_cats)],
-            ncol=2,
-            fontsize=16,
-            loc="upper right",
-        )
-
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.set_xlabel(f"Discriminant node {i}", fontsize=18)
-        ax.set_ylabel(f"Discriminant node {j}", fontsize=18)
-
-        plt.tight_layout()
-        fig.savefig(path_plot.replace(".pdf", f"_dims_{i}_{j}.pdf"))
-        plt.close(fig)
+    plt.tight_layout()
+    plt.savefig(path_plot)
+    plt.close(fig)
 
 
 def plot_yield_vs_uncertainty(
@@ -819,62 +721,43 @@ def plot_significance_comparison(
     plt.close(fig)
 
 
-def plot_gmm_1d(model, output_filename, x_range=(0.0, 1.0), n_points=10000):
+def plot_gmm_1d(model, output_filename, x_range=(0.0, 1.0), n_points=10_000):
     """
-    Plot the 1D Gaussian Mixture Model (GMM) learned by the model.
+    Plot each weighted component of a 1D GMM.
 
     Parameters
     ----------
-    model : tf.Module
-        Trained GMM model with one-dimensional data.
+    model : gato_gmm_model   (dim == 1)
     output_filename : str
-        File name to save the plot.
-    x_range : tuple of float, optional
-        Range of x values to plot. Default is (0.0, 1.0).
-    n_points : int, optional
-        Number of points in the x grid. Default is 10000.
-
-    Returns
-    -------
-    None
+    x_range : tuple(float, float)
+    n_points : int
     """
-    # 1) build x grid
-    x = np.linspace(x_range[0], x_range[1], n_points)
 
-    # 2) extract params
-    eff = model.get_effective_parameters()
-    weights = np.array(eff["mixture_weights"])  # (K,)
-    raw_means = np.array(eff["means"])  # (K,1)
-    scales = np.array(eff["scale_tril"])[:, 0, 0]  # (K,)
+    gmm = model.get_mixture_pdf()
+    comp = gmm.components_distribution  # MultivariateNormalTriL(k)
+    weights = tf.exp(model.get_mixture_weight())  # shape (k,)
 
-    # 3) activate means into [0,1]
-    mus = expit(raw_means.flatten())
+    x = np.linspace(*x_range, n_points, dtype=np.float32)  # (N,)
+    x_tf = tf.constant(x[:, None, None])  # (N, 1, 1)
+    x_tf = tf.broadcast_to(x_tf, (n_points, model.n_cats, 1))  # (N, k, 1)
 
-    # 4) pick colors
-    base = plt.rcParams["axes.prop_cycle"].by_key()["color"]
-    tab = ["tab:olive", "tab:cyan", "tab:green", "tab:pink", "tab:brown", "black"]
-    needed = model.n_cats - (len(base) + len(tab))
-    extra = [] if needed < 1 else get_distinct_colors(needed)
-    colors = (base + tab + extra)[: model.n_cats]
+    pdf_matrix = comp.prob(x_tf[:, None, :]).numpy()  # (N, k)
+    pdf_matrix = comp.prob(x_tf).numpy()  # (N, k)
+    weighted_pdfs = pdf_matrix * weights.numpy()  # broadcast multiply
 
-    # 5) plot each component
+    colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    if len(colors) < model.n_cats:  # extend colour list if needed
+        colors += [f"C{i}" for i in range(len(colors), model.n_cats)]
+
     fig, ax = plt.subplots(figsize=(8, 6))
-    for i, (w, mu, sigma, c) in enumerate(zip(weights, mus, scales, colors)):
-        pdf = w * norm.pdf(x, loc=mu, scale=sigma)
-        ax.plot(x, pdf, color=c, linewidth=3, label=f"Comp. {i}")
+    for k in range(model.n_cats):
+        ax.plot(x, weighted_pdfs[:, k], lw=3, color=colors[k], label=f"Comp. {k}")
 
     ax.set_xlim(*x_range)
-    ax.set_ylim(0, 1.2 * ax.get_ylim()[1])
+    ax.set_ylim(bottom=0)
     ax.set_xlabel("x", fontsize=22)
     ax.set_ylabel("Weighted PDF", fontsize=22)
-    ax.legend(
-        loc="upper right",
-        fontsize=16,
-        ncol=3,
-        labelspacing=0.2,  # vertical space between entries
-        columnspacing=0.4,  # horizontal space between columns
-        handlelength=1.0,  # length of the legend lines
-    )
+    ax.legend(fontsize=14, ncol=2)
     plt.tight_layout()
     fig.savefig(output_filename)
     plt.close(fig)

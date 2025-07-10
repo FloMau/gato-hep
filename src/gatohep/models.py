@@ -3,8 +3,7 @@ import math
 import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
-from typing import List, Dict
-from scipy.stats import norm
+from typing import Dict, List
 
 
 tfd = tfp.distributions
@@ -164,54 +163,100 @@ class gato_gmm_model(tf.Module):
         span = self._mean_hi - self._mean_lo  # (dim,)
         return self._mean_lo + tf.sigmoid(self.means) * span
 
-    def get_probs(self, data, temperature: float | None = None):
+    def get_mixture_weight(self) -> tf.Tensor:
         """
-        Soft assignment gamma_ik  for arbitrary inputs.
+        Log-space mixture weights   log pi_k  obtained via log-softmax.
+
+        Returns
+        -------
+        tf.Tensor
+            Shape ``(n_cats,)``; ``tf.exp(result)`` sums to 1.
+        """
+        return tf.nn.log_softmax(self.mixture_logits)
+
+    def get_mixture_pdf(self) -> tfd.Distribution:
+        """
+        Full Gaussian-mixture distribution for the current parameters.
+
+        Returns
+        -------
+        tfd.MixtureSameFamily
+            Ready to call ``log_prob`` or ``sample``.
+        """
+        # Component Gaussians
+        loc = self.get_effective_means()  # (k, dim)
+        scale_tril = self.get_scale_tril()  # (k, dim, dim)
+        components = tfd.MultivariateNormalTriL(loc=loc, scale_tril=scale_tril)
+
+        # Mixing distribution using softmax-normalised logits internally
+        cat = tfd.Categorical(logits=self.mixture_logits)
+
+        return tfd.MixtureSameFamily(
+            mixture_distribution=cat,
+            components_distribution=components,
+            name="GMM",
+        )
+
+    def get_probs(self, data, temperature=None):
+        """
+        Return the soft assignment matrix ``gamma_ik`` for any input form.
+
+        The method evaluates the log-pdf of every GMM component via the
+        model's :py:meth:`get_mixture_pdf` helper—so it automatically uses
+        the **current** means, covariances, and softmax-normalised mixture
+        weights stored in ``self.mixture_logits``.  The per-component
+        log-probabilities ``log p_k(x)`` are combined with the log-weights
+        and converted to probabilities through a *temperature-scaled*
+        soft-max:
+
+        ``gamma_ik = softmax((log p_k(x_i) + log pi_k) / T)``
 
         Parameters
         ----------
-        data :  • tf.Tensor  shape (N, dim)
-                • np.ndarray
-                • dict  {name: {"NN_output": tensor|array, ...}}  (as in examples)
+        data :
+            * **tf.Tensor** of shape ``(N, dim)``
+            * **np.ndarray** with the same shape
+            * **dict** mapping process names to either tensors/arrays **or**\
+            nested dicts that contain a key ``"NN_output"``, exactly like\
+            the training loop uses.
+        temperature : float, optional
+            Soft-max temperature *T*.  If *None*, the instance attribute
+            ``self.temperature`` is used.  Smaller values make the weights
+            approach a hard arg-max; larger values smooth them out.
+
         Returns
         -------
-        tf.Tensor or dict with shape (N, n_cats)
+        Union[tf.Tensor, dict]
+            * If *data* is a tensor/array: a tensor of shape ``(N, n_cats)``\
+            containing the soft weights for each event.
+            * If *data* is a mapping: a dict with the same keys and weight\
+            tensors as values.
         """
+
         T = temperature or self.temperature
-        loc = self.get_effective_means()
-        scale_tril = self.get_scale_tril()
-        log_mix = tf.nn.log_softmax(self.mixture_logits)
+        gmm = self.get_mixture_pdf()  # MixtureSameFamily
+
+        # Log-softmax of the logits held inside the mixture distribution
+        mix_log_w = tf.nn.log_softmax(
+            gmm.mixture_distribution.logits_parameter()
+        )  # (k,)
 
         def _single(x):
-            """
-            Return probs_ik for a single tensor/array ``x`` of shape (N, dim).
-            * Ensures rank-2 input even for one-dimensional features.
-            * Vectorises the log-pdf evaluation across all Gaussian components.
-            """
-            # Convert to tensor and make sure it is (N, dim)
-            if not tf.is_tensor(x):
-                x = tf.convert_to_tensor(x, dtype=tf.float32)
-            if tf.rank(x) == 1:  # (N,)  →  (N, 1)
-                x = tf.expand_dims(x, -1)
+            # convert to rank-2 tensor (N, dim)
+            x = tf.convert_to_tensor(x, tf.float32)
+            if x.shape.rank == 1:
+                x = x[..., tf.newaxis]
 
-            # Broadcast against batch of Gaussians: (N, 1, dim) ↔ (k, dim)
-            x = tf.expand_dims(x, 1)  # (N, 1, dim)
+            # Per-component log-pdfs: (N,1,dim) vs (k,dim) → (N,k)
+            lp = gmm.components_distribution.log_prob(x[:, tf.newaxis, :])
 
-            mvn = tfd.MultivariateNormalTriL(loc=loc, scale_tril=scale_tril)
-            lp = mvn.log_prob(x)  # (N, k) - dynamic shape
+            gamma_log = (lp + mix_log_w) / T
+            return tf.nn.softmax(gamma_log, axis=-1)  # (N,k)
 
-            logits = (lp + log_mix) / T
-            logits = tf.reshape(
-                logits, [-1, self.n_cats]
-            )  # <<< NEW - rank now known (N, k)
-
-            return tf.nn.softmax(logits, axis=-1)  # axis=-1 is safely 1
-
-        # flexible input handling
         if isinstance(data, dict):
             return {
-                k: _single(v["NN_output"] if isinstance(v, dict) else v)
-                for k, v in data.items()
+                key: _single(val["NN_output"] if isinstance(val, dict) else val)
+                for key, val in data.items()
             }
         return _single(data)
 
@@ -244,10 +289,10 @@ class gato_gmm_model(tf.Module):
             input is a single tensor/array.  If *data* is a mapping, the function
             returns a dictionary with the same keys and ``(N,)`` vectors as values.
         """
-        gamma = self.get_probs(data, temperature)
-        if isinstance(gamma, dict):
-            return {k: tf.argmax(v, axis=1) for k, v in gamma.items()}
-        return tf.argmax(gamma, axis=1)
+        probs = self.get_probs(data, temperature)
+        if isinstance(probs, dict):
+            return {k: tf.argmax(v, axis=1) for k, v in probs.items()}
+        return tf.argmax(probs, axis=1)
 
     def get_bias(self, data_dict, temperature=None, eps=1e-8):
         """
@@ -341,7 +386,9 @@ class gato_gmm_model(tf.Module):
             A dictionary containing the mixture weights, means, and scale factors.
         """
         return {
-            "mixture_weights": tf.nn.softmax(self.mixture_logits).numpy().tolist(),
+            "log mixture weights": tf.math.log_sigmoid(self.mixture_logits)
+            .numpy()
+            .tolist(),
             "means": self.means.numpy().tolist(),
             "scale_tril": self.get_scale_tril().numpy().tolist(),
         }
@@ -377,108 +424,60 @@ class gato_gmm_model(tf.Module):
         else:
             print(f"INFO: no checkpoint found in {path}, starting fresh")
 
-    def get_effective_boundaries_1d(self, n_steps=100_000, return_mapping=False):
+    def get_effective_boundaries_1d(
+        self,
+        *,
+        n_points: int = 100_000,
+        return_mapping: bool = False,
+    ):
         """
-        Numerically find the crossing points in [0,1] where the most likely
-        Gaussian component switches.
+        Find the 1-D decision boundaries implied by the current GMM.
+
+        The method probes the physical data range, converts those probe
+        points to *hard* bin indices via :py:meth:`get_bin`, and records
+        where the index changes.
 
         Parameters
         ----------
-        n_steps : int, optional
-            Number of steps for the numerical grid. Default is 100000.
+        n_points : int, optional
+            Number of evenly spaced probe points.  Default is 5 000.
         return_mapping : bool, optional
-            Whether to return the component ordering. Default is False.
+            If True, also return a permutation that orders categories
+            from left to right.
 
         Returns
         -------
-        list
-            A list of crossing points in [0,1].
-        list, optional
-            If `return_mapping` is True, also returns the component ordering.
+        boundaries : tf.Tensor, shape (n_cats - 1,)
+            Boundary locations in the same scale as the input data.
+        order : tf.Tensor, shape (n_cats,), optional
+            Category permutation, only if *return_mapping* is True.
         """
-        # 1) fetch & activate parameters
-        weight = tf.nn.softmax(self.mixture_logits).numpy()  # (n_cats,)
-        mu_raw = np.array(self.means)[:, 0]  # raw
-        mu = tf.math.sigmoid(mu_raw).numpy()  # in [0,1]
-        sig = self.get_scale_tril().numpy()[:, 0, 0]  # (n_cats,)
+        # determine the physical range of the discriminant
+        lo, hi = self.mean_range if hasattr(self, "mean_range") else (0.0, 1.0)
 
-        # 2) build grid & evaluate weighted pdfs
-        xgrid = np.linspace(0.0, 1.0, n_steps)
-        pdfs = np.vstack(
-            [w * norm.pdf(xgrid, loc=m, scale=s) for w, m, s in zip(weight, mu, sig)]
-        ).T  # shape = (n_steps, n_cats)
+        # probe the range densely and assign bins
+        grid = tf.linspace(lo, hi, n_points)  # (N,)
+        grid = tf.reshape(grid, (-1, 1))  # (N,1) expected by get_bin
+        hard = self.get_bin(grid)  # (N,)
+        flips = tf.where(hard[1:] != hard[:-1])[:, 0]
 
-        # 3) who wins where?
-        winners = np.argmax(pdfs, axis=1)  # for each x_i
+        # take mid-points between flips as boundaries
+        x_left = tf.gather(grid[:, 0], flips)
+        x_right = tf.gather(grid[:, 0], flips + 1)
+        boundaries = 0.5 * (x_left + x_right)  # (n_cats - 1,)
 
-        # 4) compute avg x-position for each component
-        avg_x = np.full(self.n_cats, 1, dtype=float)
-        for k in range(self.n_cats):
-            mask = winners == k
-            if np.any(mask):
-                avg_x[k] = xgrid[mask].mean()
+        if not return_mapping:
+            return tf.cast(boundaries, tf.float32)
 
-        # 5) order components by avg_x
-        order = np.argsort(avg_x)  # gives original -> sorted mapping
-
-        # 6) now re-index winners into sorted order (“bin 0” is leftmost, bin 1, ...)
-        inv_order = np.argsort(order)  # maps old index -> new index
-        winners_sorted = inv_order[winners]
-
-        # 7) find the first n_cats-1 transitions
-        jumps = np.where(winners_sorted[:-1] != winners_sorted[1:])[0]
-        cuts = []
-        for j in jumps:
-            cuts.append(0.5 * (xgrid[j] + xgrid[j + 1]))
-            if len(cuts) >= self.n_cats - 1:
-                break
-
-        cuts.sort()
-        if return_mapping:
-            return cuts, order.tolist()
-        return cuts
-
-    def get_boundaries_for_history(self, n_steps=100_000):
-        """
-        Compute the boundaries between Gaussian components for each epoch.
-
-        Parameters
-        ----------
-        n_steps : int, optional
-            Number of steps for the numerical grid. Default is 100000.
-
-        Returns
-        -------
-        list
-            A list of boundary positions in [0,1].
-        """
-        # activated parameters -------------------------------------------------
-        w = tf.nn.softmax(self.mixture_logits).numpy()  # (n_cats,)
-        mu = tf.math.sigmoid(self.means[:, 0]).numpy()  # (n_cats,)
-        sig = self.get_scale_tril().numpy()[:, 0, 0]  # (n_cats,)
-
-        # sort by mu to get a *stable* left-to-right ordering
-        order = np.argsort(mu)
-        w, mu, sig = w[order], mu[order], sig[order]
-
-        # dense grid + winning component at each x -----------------------------
-        x = np.linspace(0.0, 1.0, n_steps)
-        pdf = np.vstack(
-            [w_i * norm.pdf(x, mu_i, s_i) for w_i, mu_i, s_i in zip(w, mu, sig)]
-        ).T
-        winner = np.argmax(pdf, axis=1)  # (n_steps,)
-
-        # where does the winner change?  → boundaries
-        jumps = np.where(winner[:-1] != winner[1:])[0]
-        cuts = 0.5 * (x[jumps] + x[jumps + 1])  # (<= n_cats-1,)
-
-        # put them into fixed slots (NaN where missing)
-        slots = np.full(self.n_cats - 1, np.nan, dtype=float)
-        for idx, cut in zip(winner[jumps], cuts):
-            # idx = the left component of the pair (after sorting by µ)
-            if idx < self.n_cats - 1:
-                slots[idx] = cut
-        return slots.tolist()  # length = n_cats-1
+        # build permutation that sorts categories left-to-right
+        first_occ = tf.math.unsorted_segment_min(
+            tf.range(n_points), hard, num_segments=self.n_cats
+        )
+        order = tf.argsort(first_occ)  # (n_cats,)
+        return (
+            tf.cast(boundaries, tf.float32),
+            tf.cast(order, tf.int32),
+        )
 
     def compute_hard_bkg_stats(self, data_dict, signal_labels=None, eps=1e-8):
         """
