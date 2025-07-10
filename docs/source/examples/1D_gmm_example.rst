@@ -1,4 +1,4 @@
-1D toy example
+1D GMM example
 ==============
 
 This is the one-dimensional signal-vs-background demo.  Run it like this:
