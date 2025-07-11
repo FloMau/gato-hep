@@ -175,9 +175,9 @@ def main():
         n_signal=100000,
         n_bkg=n_bkg,
         xs_signal=0.5,
-        xs_bkg1=50,
-        xs_bkg2=15,
-        xs_bkg3=10,  # in pb
+        xs_bkg1=100,
+        xs_bkg2=80,
+        xs_bkg3=50,  # in pb
         lumi=100,  # in /fb
         seed=42,
     )
@@ -320,7 +320,7 @@ def main():
 
         # --- Optimization: create a model instance with n_cats = nbins ---
         model = gato_1D(n_cats=nbins, steepness=50.0)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.05, beta_1=0.9)
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.05)
 
         # steepness scheduler
         sched = SteepnessScheduler(
@@ -329,7 +329,6 @@ def main():
             t_final=10000.0,  # final k
             total_epochs=args.epochs,
             mode="cosine",  # or "exponential"
-            verbose=True,
         )
 
         loss_history = []
