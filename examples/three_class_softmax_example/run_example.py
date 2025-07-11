@@ -193,7 +193,7 @@ def main():
             return loss
 
         model = gato_2D(n_cats=n_cats, temperature=1.0)
-        optimizer = tf.keras.optimizers.Adam(0.02)
+        optimizer = tf.keras.optimizers.Adam(0.05)
 
         # temperature scheduler
         scheduler = TemperatureScheduler(

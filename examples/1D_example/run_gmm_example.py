@@ -148,11 +148,6 @@ def main():
     data = generate_toy_data_1D(
         n_signal=100000,
         n_bkg=n_bkg,
-        xs_signal=0.5,
-        xs_bkg1=50,
-        xs_bkg2=15,
-        xs_bkg3=10,  # in pb
-        lumi=100,  # in /fb
         seed=42,
     )
 
@@ -294,7 +289,7 @@ def main():
 
         # --- Optimization: create a model instance with n_cats = nbins ---
         model = gato_1D(n_cats=nbins, temperature=1.0)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.01, beta_1=0.9)
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.02)
 
         # temperature scheduler
         scheduler = TemperatureScheduler(
