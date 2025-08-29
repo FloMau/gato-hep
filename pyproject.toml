@@ -3,14 +3,14 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "gato-hep"              # distribution name
+name = "gato-hep"
 version = "0.1.0"
 description = "GATO: Gradient-based categorization optimization for HEP analyses"
 keywords = ["differentiable", "binning", "optimization", "HEP", "significance"]
 readme = "README.md"
-license = { text="MIT" }
+license = { file = "LICENSE" }
 authors = [{name="Florian Mausolf", email="florian.mausolf@rwth-aachen.de" }]
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 
 dependencies = [
     "numpy>=1.26",
@@ -25,41 +25,22 @@ dependencies = [
     "hist",
 ]
 
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["gatohep*"]        # find packages under src/gatohep
-
-[tool.ruff]
-line-length = 88
-[tool.ruff.lint]
-extend-select = [
-  "B",           # flake8-bugbear
-  "I",           # isort
-  "W",           # flake8-warnings
-  "E" ,          # flake8-errors
-  "ARG",         # flake8-unused-arguments
-  "C4",          # flake8-comprehensions
-  "EM",          # flake8-errmsg
-  "ICN",         # flake8-import-conventions
-  "PGH",         # pygrep-hooks
-  "PIE",         # flake8-pie
-  "PL",          # pylint
-  "PT",          # flake8-pytest-style
-  "PTH",         # flake8-use-pathlib
-  "RET",         # flake8-return
-  "RUF",         # Ruff-specific
-  "SIM",         # flake8-simplify
-  "TID251",      # flake8-tidy-imports.banned-api
-  "T20",         # flake8-print
-  "UP",          # pyupgrade
-  "YTT",         # flake8-2020
-]
-ignore = [
-  "PLR",
-  "RUF012",
-  "EM101",
-  "T201"
-]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov", "flake8"]
@@ -73,9 +54,7 @@ docs = [
 ]
 
 [project.urls]
-"Repository" = "https://github.com/FloMau/gato-hep"
-
-[project.scripts]
-
-[tool.hatch.envs.default]
-develop = true
+Homepage = "https://github.com/FloMau/gato-hep"
+Repository = "https://github.com/FloMau/gato-hep"
+Documentation = "https://gato-hep.readthedocs.io/en/latest/"
+Issues = "https://github.com/FloMau/gato-hep/issues"
