@@ -3,28 +3,39 @@ name: Publish (Trusted Publisher)
 on:
   push:
     tags:
-      - "v*.*.*"      # tag like v0.1.0
+      - "v*.*.*"
 
 jobs:
-  build-and-publish-testpypi:
-    name: Publish to TestPyPI
+  publish-testpypi:
+    if: contains(github.ref, '-rc')  # tags like v0.1.1-rc1 go to TestPyPI
     permissions:
-      id-token: write   # required for OIDC
+      id-token: write
       contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Build sdist and wheel
-        run: |
-          python -m pip install --upgrade build
-          python -m build
-
+      - run: python -m pip install --upgrade build
+      - run: python -m build
       - name: Publish to TestPyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    if: "!contains(github.ref, '-rc')"  # normal tags (e.g., v0.1.1) go to PyPI
+    permissions:
+      id-token: write
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade build
+      - run: python -m build
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
