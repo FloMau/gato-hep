@@ -5,6 +5,7 @@ import numpy as np
 import os
 import tensorflow as tf
 import tensorflow_probability as tfp
+import matplotlib.animation as animation
 from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.patches import Ellipse
 
@@ -498,7 +499,7 @@ def plot_bin_boundaries_2D(
 ):
     """
     Plot hard-bin regions of a *2-D* GMM on the 2-simplex face
-    (x ≥ 0, y ≥ 0, x + y ≤ 1).
+    (x >= 0, y >= 0, x + y ≤ 1).
 
     Parameters
     ----------
@@ -564,7 +565,7 @@ def plot_bin_boundaries_2D(
                 yi.mean(),
                 str(b),
                 color=colors[b],
-                fontsize=12,
+                fontsize=15,
                 ha="center",
                 va="center",
             )
@@ -760,4 +761,25 @@ def plot_gmm_1d(model, output_filename, x_range=(0.0, 1.0), n_points=10_000):
     ax.legend(fontsize=14, ncol=2)
     plt.tight_layout()
     fig.savefig(output_filename)
+    plt.close(fig)
+
+
+def make_gif(frame_files, out_name, interval=800):
+    fig = plt.figure(figsize=(6, 4))
+    plt.axis("off")
+
+    ims = []
+    for fname in frame_files:
+        img = plt.imread(fname)
+        im = plt.imshow(img, animated=True)
+        ims.append([im])
+
+    ani = animation.ArtistAnimation(
+        fig, ims,
+        interval=interval,
+        blit=True,
+        repeat_delay=1000
+    )
+    # This requires that pillow is available (it's a dependency of matplotlib)
+    ani.save(out_name, writer="pillow")
     plt.close(fig)

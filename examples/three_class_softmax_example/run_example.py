@@ -16,6 +16,7 @@ from gatohep.plotting_utils import (
     plot_significance_comparison,
     plot_stacked_histograms,
     plot_yield_vs_uncertainty,
+    make_gif
 )
 from gatohep.utils import (
     TemperatureScheduler,
@@ -179,6 +180,15 @@ def main():
     path_gato = os.path.join(path_plots, "gato")
     os.makedirs(path_gato, exist_ok=True)
 
+    # for validations, use not tf tensors
+    data_2d = {}
+    for proc, df in data.items():
+        df2 = df.copy()
+        df2["NN_output"] = [v[:2] for v in df["NN_output"].values]
+        data_2d[proc] = df2
+    sig1_scale = 100
+    sig2_scale = 500
+
     for n_cats in args.gato_bins:
 
         @tf.function
@@ -193,7 +203,7 @@ def main():
             return loss
 
         model = gato_2D(n_cats=n_cats, temperature=1.0)
-        optimizer = tf.keras.optimizers.Adam(0.05)
+        optimizer = tf.keras.optimizers.Adam(0.02)
 
         # temperature scheduler
         scheduler = TemperatureScheduler(
@@ -205,6 +215,8 @@ def main():
         )
 
         loss_history = []
+        boundary_frames = []
+        hist_frames = []
         for ep in range(args.epochs):
             scheduler.update(ep)
             loss = train_step(
@@ -212,20 +224,45 @@ def main():
                 args.lam_yield, args.lam_unc,
                 args.thr_yield, args.thr_unc
             )
-            if ep % 10 == 0:
+            if ep % 25 == 0:
                 print(f"[{ep:03d}] loss = {loss.numpy():.3f}")
+                assign, order, _, inv = assign_bins_and_order(model, data_2d, reduce=True)
+                filled = {p: fill_histogram_from_assignments(
+                    assign[p], data_2d[p]["weight"], n_cats
+                ) for p in data_2d}
+                bg_procs = [p for p in data if not p.startswith("signal")]
+                opt_bkgs = [filled[p] for p in bg_procs]
+                # 1) histogram
+                hist_fname = path_gato + f"/progress_plots_{n_cats}/hist_{ep:04d}.png"
+                plot_stacked_histograms(
+                    stacked_hists=opt_bkgs,
+                    process_labels=bg_procs,
+                    signal_hists=[
+                        sig1_scale * filled["signal1"],
+                        sig2_scale * filled["signal2"],
+                    ],
+                    signal_labels=[f"Signal1 x{sig1_scale}", f"Signal2 x{sig2_scale}"],
+                    output_filename=hist_fname,
+                    axis_labels=("Bin index", "Events"),
+                    normalize=False,
+                    log=False,
+                )
+                hist_frames.append(hist_fname)
+
+                # 2) boundaries
+                boundary_fname = path_gato + f"/frames_{n_cats}/boundary_{ep:04d}.png"
+                plot_bin_boundaries_2D(
+                    model,
+                    [i for i in range(n_cats)],
+                    boundary_fname,
+                    resolution=500
+                )
+                boundary_frames.append(boundary_fname)
             loss_history.append(loss.numpy())
 
         # check bias due to finite temperature in training
         bias = model.get_bias(tensor_data)
         print(f"T = {model.temperature:4.2f};  per-bin bias: {bias}")
-
-        # ---- bin assignment
-        data_2d = {}
-        for proc, df in data.items():
-            df2 = df.copy()
-            df2["NN_output"] = [v[:2] for v in df["NN_output"].values]  # slice each row
-            data_2d[proc] = df2
 
         assign, order, _, inv = assign_bins_and_order(model, data_2d, reduce=True)
 
@@ -268,8 +305,6 @@ def main():
         # Collect background processes
         bg_procs = [p for p in data if not p.startswith("signal")]
         opt_bkgs = [filled[p] for p in bg_procs]
-        sig1_scale = 100
-        sig2_scale = 500
 
         for use_log in (False, True):
             suffix = "log" if use_log else "linear"
@@ -316,6 +351,9 @@ def main():
                 f"Saved yield vs. unc ({suffix}):\
                 yield_vs_unc_{n_cats}bins_{suffix}.pdf"
             )
+
+        make_gif(hist_frames,      path_gato + f"frames_{n_cats}/hist_evolution.gif")
+        make_gif(boundary_frames,  path_gato + f"frames_{n_cats}/boundaries_evolution.gif")
 
     # summary comparison
     plot_significance_comparison(
