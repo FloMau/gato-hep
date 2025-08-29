@@ -211,7 +211,7 @@ def main():
             t_initial=1.0,
             t_final=0.05,
             total_epochs=args.epochs,
-            mode="cosine", # or "exponential"
+            mode="cosine",  # or "exponential"
         )
 
         loss_history = []
@@ -226,7 +226,9 @@ def main():
             )
             if ep % 25 == 0:
                 print(f"[{ep:03d}] loss = {loss.numpy():.3f}")
-                assign, order, _, inv = assign_bins_and_order(model, data_2d, reduce=True)
+                assign, order, _, inv = assign_bins_and_order(
+                    model, data_2d, reduce=True
+                )
                 filled = {p: fill_histogram_from_assignments(
                     assign[p], data_2d[p]["weight"], n_cats
                 ) for p in data_2d}
@@ -352,8 +354,12 @@ def main():
                 yield_vs_unc_{n_cats}bins_{suffix}.pdf"
             )
 
-        make_gif(hist_frames,      path_gato + f"frames_{n_cats}/hist_evolution.gif")
-        make_gif(boundary_frames,  path_gato + f"frames_{n_cats}/boundaries_evolution.gif")
+        make_gif(
+            hist_frames, path_gato + f"frames_{n_cats}/hist_evolution.gif"
+        )
+        make_gif(
+            boundary_frames, path_gato + f"frames_{n_cats}/boundaries_evolution.gif"
+        )
 
     # summary comparison
     plot_significance_comparison(

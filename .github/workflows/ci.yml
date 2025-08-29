@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: ["*"]
+    branches: ["**"]          # run on every branch
   pull_request:
-    branches: ["*"]
+    branches: ["**"]          # run for PRs from any branch
 
 jobs:
   tests:
@@ -36,3 +36,6 @@ jobs:
 
     - name: flake8 lint
       run: flake8 ./src
+
+    - name: run tests
+      run: pytest -q
