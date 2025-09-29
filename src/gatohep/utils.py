@@ -106,6 +106,57 @@ class SteepnessScheduler(TemperatureScheduler):
             )
 
 
+class LearningRateScheduler(TemperatureScheduler):
+    """Cosine or exponential annealing for an optimizer's learning rate."""
+
+    def __init__(
+        self,
+        optimizer,
+        lr_initial: float = 0.5,
+        lr_final: float = 0.001,
+        *,
+        total_epochs: int = 100,
+        mode: str = "cosine",
+        verbose: bool = False,
+    ):
+        super().__init__(
+            model=optimizer,
+            t_initial=lr_initial,
+            t_final=lr_final,
+            total_epochs=total_epochs,
+            mode=mode,
+            verbose=verbose,
+        )
+        self.optimizer = optimizer
+
+    def update(self, epoch: int) -> float:
+        """Update ``optimizer.learning_rate`` based on the current epoch."""
+        new_lr = self._schedule(epoch)
+
+        lr_attr = getattr(self.optimizer, "learning_rate", None)
+        if hasattr(lr_attr, "assign"):
+            lr_attr.assign(new_lr)
+        elif lr_attr is not None:
+            # Keras optimizers expose a property setter for plain floats.
+            self.optimizer.learning_rate = new_lr
+        else:
+            lr_attr = getattr(self.optimizer, "lr", None)
+            if hasattr(lr_attr, "assign"):
+                lr_attr.assign(new_lr)
+            elif lr_attr is not None:
+                setattr(self.optimizer, "lr", new_lr)
+            else:
+                raise AttributeError(
+                    "Optimizer has no assignable learning rate attribute."
+                )
+
+        if self.verbose:
+            print(
+                f"[LearningRateScheduler-{self.mode}] epoch {epoch:3d} -> lr = {new_lr:.6f}"
+            )
+        return new_lr
+
+
 def df_dict_to_tensors(data_dict):
     """
     Convert a dictionary of DataFrames to a dictionary of tensors.

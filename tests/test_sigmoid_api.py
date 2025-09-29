@@ -69,7 +69,7 @@ def test_sigmoid_end_to_end(tmp_path):
     # Some boundary parameter should change
     assert any(np.linalg.norm(a - b) > 0 for a, b in zip(raw_after, raw_before))
 
-    # 4) API checks: get_probs shape/normalization and get_bin bounds
+    # 4) API checks: get_probs shape/normalization and get_bin_indices bounds
     probs = model.get_probs(
         {
             k: {"NN_output": v["NN_output"]}
@@ -88,7 +88,7 @@ def test_sigmoid_end_to_end(tmp_path):
         pmin, pmax = float(tf.reduce_min(p)), float(tf.reduce_max(p))
         assert -1e-6 <= pmin <= 1.0 + 1e-6 and 0.0 <= pmax <= 1.0 + 1e-6
 
-    hard = model.get_bin(
+    hard = model.get_bin_indices(
         {
             k: {"NN_output": v["NN_output"]}
             for k, v in tdata.items()

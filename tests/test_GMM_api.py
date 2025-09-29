@@ -68,7 +68,7 @@ def test_threeclass_end_to_end(tmp_path):
     w_after = model.mixture_logits.numpy()
     assert np.linalg.norm(w_after - w_before) > 0.0  # parameters updated
 
-    # 4) API checks: get_probs shape/normalization; get_bin range
+    # 4) API checks: get_probs shape/normalization; get_bin_indices range
     probs = model.get_probs(
         {
             k: {"NN_output": v["NN_output"]}
@@ -87,7 +87,7 @@ def test_threeclass_end_to_end(tmp_path):
         pmin, pmax = float(tf.reduce_min(p)), float(tf.reduce_max(p))
         assert -1e-6 <= pmin <= 1.0 + 1e-6 and 0.0 <= pmax <= 1.0 + 1e-6
 
-    hard = model.get_bin(
+    hard = model.get_bin_indices(
         {
             k: {"NN_output": v["NN_output"]}
             for k, v in tensor_data.items()

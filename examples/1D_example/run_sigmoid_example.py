@@ -6,12 +6,14 @@ from gatohep.losses import (
 )
 from gatohep.models import gato_sigmoid_model
 from gatohep.plotting_utils import (
+    plot_bias_history,
     plot_history,
     plot_significance_comparison,
     plot_stacked_histograms,
     plot_yield_vs_uncertainty,
 )
 from gatohep.utils import (
+    LearningRateScheduler,
     SteepnessScheduler,
     asymptotic_significance,
     compute_significance_from_hists,
@@ -320,10 +322,20 @@ def main():
 
         # --- Optimization: create a model instance with n_cats = nbins ---
         model = gato_1D(n_cats=nbins, steepness=50.0)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.05)
+        # optimizer = tf.keras.optimizers.Adam(learning_rate=0.5)
+        # optimizer = tf.keras.optimizers.RMSprop(learning_rate=0.5, rho=0.9)
+        optimizer = tf.keras.optimizers.SGD(learning_rate=0.5, momentum=0.9, nesterov=True)
+
+        lr_scheduler = LearningRateScheduler(
+            optimizer,
+            lr_initial=0.5,
+            lr_final=0.001,
+            total_epochs=epochs,
+            mode="cosine",
+        )
 
         # steepness scheduler
-        sched = SteepnessScheduler(
+        steepness_scheduler = SteepnessScheduler(
             model,
             t_initial=50.0,  # starting k
             t_final=10000.0,  # final k
@@ -335,8 +347,12 @@ def main():
         penalty_yield_history = []
         penalty_unc_history = []
         boundary_history = []
+        mean_bias_history = []
+        bias_epochs = []
+        steepness_history = []
         for epoch in range(epochs):
-            sched.update(epoch)  # adjust all k_j in-place
+            lr_scheduler.update(epoch)
+            steepness_scheduler.update(epoch)  # adjust all k_j in-place
 
             total_loss, loss, penalty_yield, penalty_unc = train_step(
                 model,
@@ -348,8 +364,6 @@ def main():
                 rel_threshold_unc=unc_thr,
             )
 
-            # scheduler.update(epoch)
-
             # Save the history
             loss_history.append(loss.numpy())
             penalty_yield_history.append(penalty_yield.numpy())
@@ -357,12 +371,20 @@ def main():
             boundary_history.append(
                 model.calculate_boundaries().numpy()
             )  # list(ndarray)
+            bias_vec = model.get_bias(tensor_data)
+            mean_bias_history.append(float(np.mean(np.abs(bias_vec))))
+            bias_epochs.append(epoch)
+            steepness_history.append(float(model.var_cfg[0]["k"].numpy()))
 
             if epoch % 10 == 0 or epoch == epochs - 1:
+                lr_value = getattr(optimizer, "learning_rate", getattr(optimizer, "lr", None))
+                if hasattr(lr_value, "numpy"):
+                    lr_value = float(lr_value.numpy())
+                else:
+                    lr_value = float(lr_value)
                 print(
-                    f"[n_bins={nbins}] Epoch {epoch}: \
-                    total_loss = {total_loss.numpy():.3f}, \
-                    base_loss={loss.numpy():.3f}"
+                    f"[n_bins={nbins}] Epoch {epoch}: total_loss = {total_loss.numpy():.3f}, "
+                    f"base_loss = {loss.numpy():.3f}, lr = {lr_value:.5f}"
                 )
                 print("Effective boundaries:", model.calculate_boundaries())
         # save the trained GATO model
@@ -375,7 +397,7 @@ def main():
 
         # check bias due to finite temperature in training
         bias = model.get_bias(tensor_data)
-        print(f"T = {model};  per-bin bias: {bias}")
+        print(f"Steepness = {float(model.var_cfg[0]['k'].numpy()):.1f};  per-bin bias: {bias}")
 
         opt_bin_edges = np.concatenate(([low], np.array(eff_boundaries), [high]))
         h_signal_opt = create_hist(
@@ -435,6 +457,23 @@ def main():
             log=True,
         )
         print(f"Optimized binning ({nbins} bins) plot saved as {opt_plot_filename}")
+
+        bias_plot_base = path_plots + f"bias_history_{nbins}bins"
+        plot_bias_history(
+            mean_bias_history,
+            bias_plot_base + ".pdf",
+            epochs=bias_epochs,
+            temp_points=steepness_history,
+            temp_label="Steepness",
+        )
+        plot_bias_history(
+            mean_bias_history,
+            bias_plot_base + "_log.pdf",
+            epochs=bias_epochs,
+            temp_points=steepness_history,
+            temp_label="Steepness",
+            log_scale=True,
+        )
 
         # Plot the loss
         loss_plot_name = path_plots + f"history_loss_{nbins}bins.pdf"

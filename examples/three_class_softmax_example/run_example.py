@@ -10,6 +10,7 @@ from gatohep.models import gato_gmm_model
 from gatohep.plotting_utils import (
     assign_bins_and_order,
     fill_histogram_from_assignments,
+    plot_bias_history,
     plot_bin_boundaries_2D,
     plot_history,
     plot_learned_gaussians,
@@ -19,6 +20,7 @@ from gatohep.plotting_utils import (
     make_gif
 )
 from gatohep.utils import (
+    LearningRateScheduler,
     TemperatureScheduler,
     asymptotic_significance,
     compute_significance_from_hists,
@@ -203,7 +205,17 @@ def main():
             return loss
 
         model = gato_2D(n_cats=n_cats, temperature=1.0)
-        optimizer = tf.keras.optimizers.Adam(0.02)
+        # optimizer = tf.keras.optimizers.Adam(0.5)
+        # optimizer = tf.keras.optimizers.RMSprop(0.5, rho=0.9)
+        optimizer = tf.keras.optimizers.SGD(0.5, momentum=0.9, nesterov=True)
+
+        lr_sched = LearningRateScheduler(
+            optimizer,
+            lr_initial=1.0,
+            lr_final=0.001,
+            total_epochs=args.epochs,
+            mode="cosine",
+        )
 
         # temperature scheduler
         scheduler = TemperatureScheduler(
@@ -217,15 +229,29 @@ def main():
         loss_history = []
         boundary_frames = []
         hist_frames = []
+        mean_bias_history = []
+        bias_epochs = []
+        temperature_history = []
         for ep in range(args.epochs):
+            lr_sched.update(ep)
             scheduler.update(ep)
             loss = train_step(
                 model, tensor_data, optimizer,
                 args.lam_yield, args.lam_unc,
                 args.thr_yield, args.thr_unc
             )
+            bias_vec = model.get_bias(tensor_data)
+            mean_bias_history.append(float(np.mean(np.abs(bias_vec))))
+            bias_epochs.append(ep)
+            temperature_history.append(float(model.temperature))
+
             if ep % 25 == 0:
-                print(f"[{ep:03d}] loss = {loss.numpy():.3f}")
+                lr_value = getattr(optimizer, "learning_rate", getattr(optimizer, "lr", None))
+                if hasattr(lr_value, "numpy"):
+                    lr_value = float(lr_value.numpy())
+                else:
+                    lr_value = float(lr_value)
+                print(f"[{ep:03d}] loss = {loss.numpy():.3f}, lr = {lr_value:.5f}")
                 assign, order, _, inv = assign_bins_and_order(
                     model, data_2d, reduce=True
                 )
@@ -261,6 +287,23 @@ def main():
                 )
                 boundary_frames.append(boundary_fname)
             loss_history.append(loss.numpy())
+
+        bias_plot_base = os.path.join(path_gato, f"bias_history_{n_cats}bins")
+        plot_bias_history(
+            mean_bias_history,
+            bias_plot_base + ".pdf",
+            epochs=bias_epochs,
+            temp_points=temperature_history,
+            temp_label="Temperature",
+        )
+        plot_bias_history(
+            mean_bias_history,
+            bias_plot_base + "_log.pdf",
+            epochs=bias_epochs,
+            temp_points=temperature_history,
+            temp_label="Temperature",
+            log_scale=True,
+        )
 
         # check bias due to finite temperature in training
         bias = model.get_bias(tensor_data)
@@ -355,10 +398,10 @@ def main():
             )
 
         make_gif(
-            hist_frames, path_gato + f"frames_{n_cats}/hist_evolution.gif"
+            hist_frames, path_gato + f"/frames_{n_cats}/hist_evolution.gif"
         )
         make_gif(
-            boundary_frames, path_gato + f"frames_{n_cats}/boundaries_evolution.gif"
+            boundary_frames, path_gato + f"/frames_{n_cats}/boundaries_evolution.gif"
         )
 
     # summary comparison

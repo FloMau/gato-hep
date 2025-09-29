@@ -8,6 +8,7 @@ from gatohep.models import (
     gato_gmm_model,
 )
 from gatohep.plotting_utils import (
+    plot_bias_history,
     plot_gmm_1d,
     plot_history,
     plot_significance_comparison,
@@ -15,6 +16,7 @@ from gatohep.plotting_utils import (
     plot_yield_vs_uncertainty,
 )
 from gatohep.utils import (
+    LearningRateScheduler,
     TemperatureScheduler,
     asymptotic_significance,
     compute_significance_from_hists,
@@ -289,10 +291,20 @@ def main():
 
         # --- Optimization: create a model instance with n_cats = nbins ---
         model = gato_1D(n_cats=nbins, temperature=1.0)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.02)
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.5)
+        # optimizer = tf.keras.optimizers.RMSprop(learning_rate=0.5, rho=0.9)
+        # optimizer = tf.keras.optimizers.SGD(learning_rate=0.5, momentum=0.9, nesterov=True)  # 0.02...0.001 works well
+
+        lr_scheduler = LearningRateScheduler(
+            optimizer,
+            lr_initial=0.2,
+            lr_final=0.001,
+            total_epochs=epochs,
+            mode="cosine",
+        )
 
         # temperature scheduler
-        scheduler = TemperatureScheduler(
+        temperature_scheduler = TemperatureScheduler(
             model,
             t_initial=1.0,
             t_final=0.05,
@@ -303,7 +315,13 @@ def main():
         loss_history = []
         penalty_yield_history = []
         penalty_unc_history = []
+        mean_bias_history = []
+        bias_epochs = []
+        temperature_history = []
         for epoch in range(epochs):
+            lr_scheduler.update(epoch)
+            temperature_scheduler.update(epoch)
+
             total_loss, loss, penalty_yield, penalty_unc = train_step(
                 model,
                 tensor_data,
@@ -314,18 +332,24 @@ def main():
                 rel_threshold_unc=unc_thr,
             )
 
-            scheduler.update(epoch)
-
             # Save the history
             loss_history.append(loss.numpy())
             penalty_yield_history.append(penalty_yield.numpy())
             penalty_unc_history.append(penalty_unc.numpy())
+            bias_vec = model.get_bias(tensor_data)
+            mean_bias_history.append(float(np.mean(np.abs(bias_vec))))
+            bias_epochs.append(epoch)
+            temperature_history.append(float(model.temperature))
 
             if epoch % 10 == 0 or epoch == epochs - 1:
+                lr_value = getattr(optimizer, "learning_rate", getattr(optimizer, "lr", None))
+                if hasattr(lr_value, "numpy"):
+                    lr_value = float(lr_value.numpy())
+                else:
+                    lr_value = float(lr_value)
                 print(
-                    f"[n_bins={nbins}] Epoch {epoch}: \
-                    total_loss = {total_loss.numpy():.3f}, \
-                    base_loss={loss.numpy():.3f}"
+                    f"[n_bins={nbins}] Epoch {epoch}: total_loss = {total_loss.numpy():.3f}, "
+                    f"base_loss = {loss.numpy():.3f}, lr = {lr_value:.5f}"
                 )
                 print("Effective boundaries:", model.get_effective_boundaries_1d())
         # save the trained GATO model
@@ -372,6 +396,23 @@ def main():
         optimized_significances[nbins] = Z_opt
 
         print(f"Optimized binning ({nbins} bins): Overall significance = {Z_opt:.3f}")
+
+        bias_plot_base = path_plots + f"bias_history_{nbins}bins"
+        plot_bias_history(
+            mean_bias_history,
+            bias_plot_base + ".pdf",
+            epochs=bias_epochs,
+            temp_points=temperature_history,
+            temp_label="Temperature",
+        )
+        plot_bias_history(
+            mean_bias_history,
+            bias_plot_base + "_log.pdf",
+            epochs=bias_epochs,
+            temp_points=temperature_history,
+            temp_label="Temperature",
+            log_scale=True,
+        )
 
         opt_plot_filename = (
             path_plots + f"NN_output_distribution_optimized_{nbins}bins.pdf"

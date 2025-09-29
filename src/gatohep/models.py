@@ -260,7 +260,7 @@ class gato_gmm_model(tf.Module):
             }
         return _single(data)
 
-    def get_bin(self, data, temperature: float | None = None):
+    def get_bin_indices(self, data, temperature: float | None = None):
         """
         Convert input events into *hard* bin indices.
 
@@ -339,7 +339,7 @@ class gato_gmm_model(tf.Module):
         # 1) Soft assignments and hard argmax assignments
         # ------------------------------------------------------------------
         probs_dict = self.get_probs(data_dict, temperature=temp)  # {proc: (N,k)}
-        bins_dict = self.get_bin(data_dict, temperature=temp)  # {proc: (N,)}
+        bins_dict = self.get_bin_indices(data_dict, temperature=temp)  # {proc: (N,)}
 
         hard_y = tf.zeros(n_cats, dtype=tf.float32)  # Σ w (hard)
         soft_y = tf.zeros(n_cats, dtype=tf.float32)  # Σ γ w (soft)
@@ -434,7 +434,7 @@ class gato_gmm_model(tf.Module):
         Find the 1-D decision boundaries implied by the current GMM.
 
         The method probes the physical data range, converts those probe
-        points to *hard* bin indices via :py:meth:`get_bin`, and records
+        points to *hard* bin indices via :py:meth:`get_bin_indices`, and records
         where the index changes.
 
         Parameters
@@ -457,8 +457,8 @@ class gato_gmm_model(tf.Module):
 
         # probe the range densely and assign bins
         grid = tf.linspace(lo, hi, n_points)  # (N,)
-        grid = tf.reshape(grid, (-1, 1))  # (N,1) expected by get_bin
-        hard = self.get_bin(grid)  # (N,)
+        grid = tf.reshape(grid, (-1, 1))  # (N,1) expected by get_bin_indices
+        hard = self.get_bin_indices(grid)  # (N,)
         flips = tf.where(hard[1:] != hard[:-1])[:, 0]
 
         # take mid-points between flips as boundaries
@@ -523,7 +523,7 @@ class gato_gmm_model(tf.Module):
             signal_set = set(signal_labels)
             is_signal = lambda name: name in signal_set
 
-        bins_dict = self.get_bin(data_dict)  # {proc: (N,)}
+        bins_dict = self.get_bin_indices(data_dict)  # {proc: (N,)}
 
         n_cats = self.n_cats
         B = tf.zeros(n_cats, dtype=tf.float32)  # Σ w   (background)
@@ -601,7 +601,7 @@ class gato_sigmoid_model(tf.Module):
     --------------
     get_probs(x)
         Soft assignment gamma_ik (shape N x n_cats).
-    get_bin(x)
+    get_bin_indices(x)
         Hard bin index per event (shape N,).
     get_bias(data)
         Per-bin bias (hard minus soft) divided by hard yield.
@@ -664,6 +664,20 @@ class gato_sigmoid_model(tf.Module):
         return boundaries
 
     def calculate_boundaries(self, j: int = 0) -> tf.Tensor:
+        """
+        Return the ordered physical boundaries for variable *j*.
+
+        Parameters
+        ----------
+        j : int, optional
+            Index of the discriminant whose boundaries are requested.
+
+        Returns
+        -------
+        tf.Tensor
+            Tensor of shape ``(n_bins - 1,)`` with boundary locations expressed
+            in the variable's original scale.
+        """
         cfg = self.var_cfg[j]
         in_unit = self._calculate_boundaries(cfg["raw"])
         return cfg["lo"] + in_unit * cfg["span"]
@@ -709,7 +723,26 @@ class gato_sigmoid_model(tf.Module):
             }
         return _single(data)
 
-    def get_bin(self, data, *, steepness_scale: float | None = None):
+    def get_bin_indices(self, data, *, steepness_scale: float | None = None):
+        """
+        Convert input data into hard bin indices.
+
+        Parameters
+        ----------
+        data : Union[tf.Tensor, np.ndarray, Mapping[str, Any]]
+            Input events as a tensor/array of shape ``(N, n_disc)`` or a mapping
+            that mirrors the training loop structure with ``"NN_output"`` keys.
+        steepness_scale : float, optional
+            Multiplicative factor applied to every sigmoid steepness.  ``None``
+            (default) keeps the model's stored values.
+
+        Returns
+        -------
+        Union[tf.Tensor, dict]
+            Hard bin indices with dtype ``tf.int32``.  When *data* is a mapping,
+            the result is a dict with the same keys and ``(N,)`` tensors.  Otherwise
+            a single ``(N,)`` tensor is returned.
+        """
         probs = self.get_probs(data, steepness_scale=steepness_scale)
         if isinstance(probs, dict):
             return {
@@ -718,8 +751,28 @@ class gato_sigmoid_model(tf.Module):
         return tf.argmax(probs, axis=1, output_type=tf.int32)
 
     def get_bias(self, data_dict, *, steepness_scale: float | None = None, eps=1e-8):
+        """
+        Estimate the per-bin bias from using soft assignments.
+
+        Parameters
+        ----------
+        data_dict : Mapping[str, dict]
+            Event collections with ``"NN_output"`` and ``"weight"`` entries,
+            identical to what :meth:`get_probs` expects.
+        steepness_scale : float, optional
+            Additional factor applied to every steepness value before computing
+            probabilities.  Defaults to ``None`` for no rescaling.
+        eps : float, optional
+            Small positive constant that guards against division by zero.
+
+        Returns
+        -------
+        np.ndarray
+            One-dimensional array of length ``n_cats`` containing
+            ``(hard - soft) / hard`` for each bin.
+        """
         soft = self.get_probs(data_dict, steepness_scale=steepness_scale)
-        hard = self.get_bin(data_dict, steepness_scale=steepness_scale)
+        hard = self.get_bin_indices(data_dict, steepness_scale=steepness_scale)
 
         hard_y = tf.zeros(self.n_cats, tf.float32)
         soft_y = tf.zeros(self.n_cats, tf.float32)
@@ -801,7 +854,7 @@ class gato_sigmoid_model(tf.Module):
             signal_set = set(signal_labels)
             is_signal = lambda name: name in signal_set
 
-        bins_dict = self.get_bin(data_dict)  # {proc: (N,)}
+        bins_dict = self.get_bin_indices(data_dict)  # {proc: (N,)}
 
         n_cats = self.n_cats
         B = tf.zeros(n_cats, dtype=tf.float32)  # Σ w   (background)

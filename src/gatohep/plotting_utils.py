@@ -230,6 +230,40 @@ def plot_history(
     plt.close(fig)
 
 
+def plot_bias_history(mean_bias_list, output_filename, *, epochs=None, temp_points=None, temp_label="Temperature", log_scale=False):
+    """Plot mean soft-hard bias with optional secondary axis for temperature/steepness."""
+    if not mean_bias_list:
+        return
+    mean_bias = np.asarray(mean_bias_list, dtype=float)
+    if epochs is None:
+        epochs = np.arange(len(mean_bias), dtype=float)
+    else:
+        epochs = np.asarray(epochs, dtype=float)
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.plot(epochs, mean_bias, marker="o", color="C0")
+    ax.set_xlabel("Epoch", fontsize=22)
+    ax.set_ylabel("Mean soft-hard bias", fontsize=22, color="C0")
+    ax.tick_params(axis="y", colors="C0")
+    ax.spines["left"].set_color("C0")
+    if log_scale:
+        positive = mean_bias[mean_bias > 0]
+        if positive.size:
+            ax.set_yscale("log")
+            ax.set_ylim(max(float(positive.min()) * 0.7, 1e-6), None)
+    if temp_points is not None:
+        temp_arr = np.asarray(temp_points, dtype=float)
+        ax2 = ax.twinx()
+        ax2.plot(epochs, temp_arr, color="C1", linestyle="--", marker="s")
+        ax2.set_ylabel(temp_label, fontsize=22, color="C1")
+        ax2.tick_params(axis="y", colors="C1")
+        ax2.spines["right"].set_color("C1")
+    fig.tight_layout()
+    os.makedirs(os.path.dirname(output_filename), exist_ok=True)
+    fig.savefig(output_filename)
+    plt.close(fig)
+
+
+
 def assign_bins_and_order(model, data, reduce=False, eps=1e-6):
     """
     Assign events to bins and compute bin significance.
@@ -526,7 +560,7 @@ def plot_bin_boundaries_2D(
     pts = np.stack([X[mask], Y[mask]], axis=-1)  # (P, 2)
 
     # 2)  Ask the model which bin each point belongs to
-    bin_ids = model.get_bin(tf.constant(pts, dtype=tf.float32)).numpy()  # (P,)
+    bin_ids = model.get_bin_indices(tf.constant(pts, dtype=tf.float32)).numpy()  # (P,)
 
     # Map original bin indices -> desired plotting order
     #   original index  = bin_ids[i]
