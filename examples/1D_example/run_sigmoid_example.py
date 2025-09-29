@@ -371,10 +371,11 @@ def main():
             boundary_history.append(
                 model.calculate_boundaries().numpy()
             )  # list(ndarray)
-            bias_vec = model.get_bias(tensor_data)
-            mean_bias_history.append(float(np.mean(np.abs(bias_vec))))
-            bias_epochs.append(epoch)
-            steepness_history.append(float(model.var_cfg[0]["k"].numpy()))
+            if epoch % 25 == 0 or epoch == epochs - 1:
+                bias_vec = model.get_bias(tensor_data)
+                mean_bias_history.append(float(np.mean(np.abs(bias_vec))))
+                bias_epochs.append(epoch)
+                steepness_history.append(float(model.var_cfg[0]["k"].numpy()))
 
             if epoch % 10 == 0 or epoch == epochs - 1:
                 lr_value = getattr(optimizer, "learning_rate", getattr(optimizer, "lr", None))

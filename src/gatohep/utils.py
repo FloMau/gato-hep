@@ -152,7 +152,7 @@ class LearningRateScheduler(TemperatureScheduler):
 
         if self.verbose:
             print(
-                f"[LearningRateScheduler-{self.mode}] epoch {epoch:3d} -> lr = {new_lr:.6f}"
+                f"[LR scheduler-{self.mode}] epoch {epoch:3d} -> LR = {new_lr:.6f}"
             )
         return new_lr
 

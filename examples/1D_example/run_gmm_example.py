@@ -336,10 +336,11 @@ def main():
             loss_history.append(loss.numpy())
             penalty_yield_history.append(penalty_yield.numpy())
             penalty_unc_history.append(penalty_unc.numpy())
-            bias_vec = model.get_bias(tensor_data)
-            mean_bias_history.append(float(np.mean(np.abs(bias_vec))))
-            bias_epochs.append(epoch)
-            temperature_history.append(float(model.temperature))
+            if epoch % 25 == 0 or epoch == epochs - 1:
+                bias_vec = model.get_bias(tensor_data)
+                mean_bias_history.append(float(np.mean(np.abs(bias_vec))))
+                bias_epochs.append(epoch)
+                temperature_history.append(float(model.temperature))
 
             if epoch % 10 == 0 or epoch == epochs - 1:
                 lr_value = getattr(optimizer, "learning_rate", getattr(optimizer, "lr", None))

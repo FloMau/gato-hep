@@ -240,10 +240,12 @@ def main():
                 args.lam_yield, args.lam_unc,
                 args.thr_yield, args.thr_unc
             )
-            bias_vec = model.get_bias(tensor_data)
-            mean_bias_history.append(float(np.mean(np.abs(bias_vec))))
-            bias_epochs.append(ep)
-            temperature_history.append(float(model.temperature))
+
+            if ep % 25 == 0 or ep == args.epochs - 1:
+                bias_vec = model.get_bias(tensor_data)
+                mean_bias_history.append(float(np.mean(np.abs(bias_vec))))
+                bias_epochs.append(ep)
+                temperature_history.append(float(model.temperature))
 
             if ep % 25 == 0:
                 lr_value = getattr(optimizer, "learning_rate", getattr(optimizer, "lr", None))

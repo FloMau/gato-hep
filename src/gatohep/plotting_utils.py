@@ -230,8 +230,18 @@ def plot_history(
     plt.close(fig)
 
 
-def plot_bias_history(mean_bias_list, output_filename, *, epochs=None, temp_points=None, temp_label="Temperature", log_scale=False):
-    """Plot mean soft-hard bias with optional secondary axis for temperature/steepness."""
+def plot_bias_history(
+    mean_bias_list,
+    output_filename,
+    *,
+    epochs=None,
+    temp_points=None,
+    temp_label="Temperature",
+    log_scale=False
+):
+    """
+    Plot mean soft-hard bias with optional secondary axis for temperature/steepness.
+    """
     if not mean_bias_list:
         return
     mean_bias = np.asarray(mean_bias_list, dtype=float)
@@ -261,7 +271,6 @@ def plot_bias_history(mean_bias_list, output_filename, *, epochs=None, temp_poin
     os.makedirs(os.path.dirname(output_filename), exist_ok=True)
     fig.savefig(output_filename)
     plt.close(fig)
-
 
 
 def assign_bins_and_order(model, data, reduce=False, eps=1e-6):
