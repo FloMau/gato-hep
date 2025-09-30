@@ -322,13 +322,11 @@ def main():
 
         # --- Optimization: create a model instance with n_cats = nbins ---
         model = gato_1D(n_cats=nbins, steepness=50.0)
-        # optimizer = tf.keras.optimizers.Adam(learning_rate=0.5)
-        # optimizer = tf.keras.optimizers.RMSprop(learning_rate=0.5, rho=0.9)
-        optimizer = tf.keras.optimizers.SGD(learning_rate=0.5, momentum=0.9, nesterov=True)
 
+        optimizer = tf.keras.optimizers.RMSprop(learning_rate=0.1)
         lr_scheduler = LearningRateScheduler(
             optimizer,
-            lr_initial=0.5,
+            lr_initial=0.1,
             lr_final=0.001,
             total_epochs=epochs,
             mode="cosine",
@@ -340,7 +338,7 @@ def main():
             t_initial=50.0,  # starting k
             t_final=10000.0,  # final k
             total_epochs=args.epochs,
-            mode="cosine",  # or "exponential"
+            mode="cosine",
         )
 
         loss_history = []

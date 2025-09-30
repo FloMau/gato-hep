@@ -205,25 +205,23 @@ def main():
             return loss
 
         model = gato_2D(n_cats=n_cats, temperature=1.0)
-        # optimizer = tf.keras.optimizers.Adam(0.5)
-        # optimizer = tf.keras.optimizers.RMSprop(0.5, rho=0.9)
-        optimizer = tf.keras.optimizers.SGD(0.5, momentum=0.9, nesterov=True)
 
-        lr_sched = LearningRateScheduler(
+        optimizer = tf.keras.optimizers.RMSprop(0.1)
+        lr_scheduler = LearningRateScheduler(
             optimizer,
-            lr_initial=1.0,
+            lr_initial=0.1,
             lr_final=0.001,
             total_epochs=args.epochs,
             mode="cosine",
         )
 
         # temperature scheduler
-        scheduler = TemperatureScheduler(
+        temperature_scheduler = TemperatureScheduler(
             model,
             t_initial=1.0,
             t_final=0.05,
             total_epochs=args.epochs,
-            mode="cosine",  # or "exponential"
+            mode="cosine",
         )
 
         loss_history = []
@@ -233,8 +231,8 @@ def main():
         bias_epochs = []
         temperature_history = []
         for ep in range(args.epochs):
-            lr_sched.update(ep)
-            scheduler.update(ep)
+            lr_scheduler.update(ep)
+            temperature_scheduler.update(ep)
             loss = train_step(
                 model, tensor_data, optimizer,
                 args.lam_yield, args.lam_unc,

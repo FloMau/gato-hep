@@ -6,5 +6,5 @@ __pycache__/
 old*
 *egg-info/
 docs/build/
-**/Plots
-**/PlotsSigmoidModel/
+**/Plots*
+**/plots*
