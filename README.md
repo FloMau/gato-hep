@@ -1,85 +1,163 @@
-gato-hep: Gradient-based Categorization Optimizer for High Energy Physics
-==============================================
+gato-hep
+========
 
 [![Documentation Status](https://readthedocs.org/projects/gato-hep/badge/?version=latest)](https://gato-hep.readthedocs.io/en/latest/)
 
+Gradient-based cATegorization Optimizer for High Energy Physics analyses.
+gato-hep learns boundaries in N-dimensional discriminants that maximize signal significance for binned likelihood fits, using differentiable significance models and TensorFlow-based optimization.
 
-A toolkit for binning / categorisation optimisation with respect to signal 
-significance for HEP analyses, using gradient-descent methods.
-gatohep relies on TensorFlow with TensorFlow-Probability.
 
-The categorisation can be performed directly in a multidimensional discriminant 
-space, e.g. from a mutliclassifier with softmax activation.
-The bins are defined by learnable multidimensional Gaussians as a Gaussian Mixture Model (GMM), or, well working in 1D, using bin boundaries approximated by steep sigmoid functions of learnable position.
+- 📘 Documentation: https://gato-hep.readthedocs.io/
+- 📦 PyPI: https://pypi.org/project/gato-hep/
+- 🧪 Examples: see the `examples/` directory in this repository
 
-See the full documentation at <https://gato-hep.readthedocs.io/>.
+Key Features
+------------
+- Optimize categorizations in multi-dimensional spaces using Gaussian Mixture Models (GMM) or 1D sigmoid-based models
+- Set the range of the discriminant dimensions as needed for your discriminant
+- Penalize low-yield or high-uncertainty categories to keep optimizations analysis-friendly
+- Built-in annealing schedules for temperature / steepness, and learning rate to stabilize training and to approach the hard class assignments
+- Ready-to-run toy workflows that mirror real HEP analysis patterns
 
---------------------------------------------------------------------
-Quick install (editable mode)
---------------------------------------------------------------------
+Installation
+------------
+
+### Latest release (PyPI)
+
+```bash
+pip install gato-hep
+```
+
+The base install targets CPU execution and pulls the tested TensorFlow stack automatically. Optional extras:
+
+```bash
+pip install "gato-hep[gpu]"   # CUDA-enabled TensorFlow wheels
+```
+
+For the GPU extra you still need NVIDIA drivers and CUDA libraries that match the selected TensorFlow build.
+
+### From source
+
 ```bash
 git clone https://github.com/FloMau/gato-hep.git
 cd gato-hep
-python3 -m venv gato_env       # or use conda
-source gato_env/bin/activate
-pip install -e .
+python -m venv .venv  # or use micromamba/conda
+source .venv/bin/activate
+pip install -e ".[dev]"
 ```
 
-Dependencies are declared in *pyproject.toml*. 
-Note: The only tricky part is to find matching versions of tensorflow, tensorflow-probability and ml-dtypes. The requirements mentioned here should work, however, other combinations may work as well.
+Requirements: Python ≥ 3.10. See `pyproject.toml` for the authoritative dependency pins.
 
---------------------------------------------------------------------
-## Running the toy examples
---------------------------------------------------------------------
-### 1D toy (signal vs. multi-background)
+Quickstart
+----------
+The snippet below mirrors the three-class softmax demo.
+It generates the 3D toy sample, fits a two-dimensional Gaussian mixture model to the softmax scores, and reports the per-signal significances produced by the learnt categories.
+
 ```python
-python examples/1D_example/run_toy_example.py
-```
+import numpy as np
+import tensorflow as tf
+from pathlib import Path
 
-### 3-class soft-max (2 D slice of 3 D)
-```python
-python examples/three_class_softmax_example/run_example.py
-```
-
-Each script writes plots & a significance comparison table.
-
---------------------------------------------------------------------
-## Apply gato-hep to your own data
---------------------------------------------------------------------
-``` python
-# standard GMM model for ND optimisation
+from gatohep.data_generation import generate_toy_data_3class_3D
 from gatohep.models import gato_gmm_model
-# more to be included here later on
+from gatohep.utils import asymptotic_significance
 
-# see ./examples for a full workflow!
+
+def convert_data_to_tensors(data):
+    tensors = {}
+    for proc, df in data.items():
+        # softmax lives on a simplex -> sufficient to use two coordinates only
+        scores = np.stack(df["NN_output"].values)[:, :2]
+        w = df["weight"].values
+        tensors[proc] = {
+            "NN_output": tf.constant(scores, dtype=tf.float32),
+            "weight": tf.constant(w, dtype=tf.float32),
+        }
+    return tensors
+
+# setup class for the 2D discriminant optimization
+class SoftmaxGMM(gato_gmm_model):
+    def __init__(self, n_cats, temperature=0.3):
+        super().__init__(
+            n_cats=n_cats,
+            dim=2,
+            temperature=temperature,
+            mean_norm="softmax",
+        )
+
+    def call(self, data_dict):
+        probs = self.get_probs(data_dict)
+        sig1 = tf.zeros(self.n_cats, tf.float32)
+        sig2 = tf.zeros(self.n_cats, tf.float32)
+        bkg = tf.zeros(self.n_cats, tf.float32)
+
+        for proc, gamma in probs.items():
+            weights = data_dict[proc]["weight"]
+            yields = tf.reduce_sum(gamma * weights[:, None], axis=0)
+            if proc == "signal1":
+                sig1 += yields
+            elif proc == "signal2":
+                sig2 += yields
+            else:
+                bkg += yields
+
+        # we use these differentiable yields to calculate the significances for both signals
+        z1 = tf.sqrt(tf.reduce_sum(asymptotic_significance(sig1, bkg + sig2) ** 2))
+        z2 = tf.sqrt(tf.reduce_sum(asymptotic_significance(sig2, bkg + sig1) ** 2))
+        # return negative geometric mean as loss
+        return -tf.sqrt(z1 * z2)
+
+seed = 42
+np.random.seed(seed)
+tf.random.set_seed(seed)
+
+data = generate_toy_data_3class_3D(seed=seed, n_bkg=500_000)
+tensors = convert_data_to_tensors(data)
+
+# example: use 10 bins
+model = SoftmaxGMM(n_cats=10, temperature=0.3)
+optimizer = tf.keras.optimizers.RMSprop(learning_rate=0.05)
+
+for epoch in range(100):
+    with tf.GradientTape() as tape:
+        loss = model.call(tensors)
+    grads = tape.gradient(loss, model.trainable_variables)
+    optimizer.apply_gradients(zip(grads, model.trainable_variables))
+
+# Save the trained model for later use in the analysis to some path
+model.save(checkpoint_path)
+
+# Restore the model
+restored = SoftmaxGMM(n_cats=10, temperature=0.3)
+restored.restore(checkpoint_path)
+
+# Obtain the hard (non-differentiable) bin assignments
+assignments = restored.get_bin_indices(tensors)
 ```
 
---------------------------------------------------------------------
-## Directory layout
---------------------------------------------------------------------
-```
-gato-hep/                       project root
-│
-├─ pyproject.toml           metadata + dependencies
-├─ src/gatohep/                installable Python package
-│   │
-│   ├─ __init__.py
-│   ├─ models.py            Trainable model class
-│   └─ losses.py            custom loss / penalty terms
-│   ├─ utils.py             misc helpers
-│   ├─ plotting_utils.py    helper plots (stacked hists, bin boundaries, ...)
-│   ├─ data_generation.py   toy data generators (1D / 3-class softmax)
-│
-└─ examples/                runnable demos
-    ├─ 1D_example/run_example.py
-    └─ three_class_softmax_example/run_example.py
-```
+See `examples/three_class_softmax_example/run_example.py` for the full training loop with schedulers, plotting helpers, and GIF generation.
 
---------------------------------------------------------------------
-## Contributing
---------------------------------------------------------------------
-1. `git checkout -b feature/xyz`
-2. Code under *src/gatohep/*, add tests under *tests/*.
-3. Update version in *pyproject.toml*.
-4. `black` / `isort` / `pytest`, then open a PR.
+Examples & Tutorials
+--------------------
+- `examples/1D_example/run_sigmoid_example.py` – sigmoid boundaries for a single discriminant, complete with penalties and diagnostic plots.
+- `examples/1D_example/run_gmm_example.py` – learn Gaussian mixture templates for 1D optimization.
+- `examples/three_class_softmax_example/run_example.py` – optimize categories directly on a 3-class softmax output (shown in 2D projections).
+- `examples/analyse_sigmoid_models.py` – restore checkpoints and regenerate the plots/significance tables from trained 1D runs.
 
+Every script populates an `examples/.../Plots*/` folder with PDFs, tables, and checkpoints that you can compare in the paper workflow.
+
+Further Reading
+---------------
+- Full documentation, including the API reference: https://gato-hep.readthedocs.io/
+- Issues & feature requests: https://github.com/FloMau/gato-hep/issues
+
+Contributing
+------------
+1. Fork and branch: `git checkout -b feature/xyz`.
+2. Implement changes under `src/gatohep/` and possibly add/adjust tests in `tests/`.
+3. Format and lint (`flake8`) and run `pytest`.
+4. Open a pull request summarizing the physics motivation and technical changes.
+
+License
+-------
+MIT License © Florian Mausolf
