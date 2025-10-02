@@ -1,15 +1,24 @@
 1D GMM example
 ==============
 
-This is the one-dimensional signal-vs-background demo.  Run it like this:
+Optimize bin boundaries for a single discriminant using a Gaussian mixture model. The script builds the toy dataset, trains multiple category counts, and compares GATO-derived significances to equidistant baselines.
+
+Run:
 
 .. code-block:: console
 
-    python ../../examples/1D_example/run_gmm_example.py
+    python examples/1D_example/run_gmm_example.py --gato-bins 5 10 20 --epochs 300
 
-And here is the source:
+Key outputs
+-----------
+- Stacked histograms for both equidistant and optimized binning schemes.
+- Loss, boundary and penalty histories saved under ``examples/1D_example/Plots*/``.
+- ``checkpoints/<N>_bins`` directories storing model weights for later inspection.
+
+Source code
+-----------
 
 .. literalinclude:: ../../../examples/1D_example/run_gmm_example.py
     :language: python
     :linenos:
-    :caption: Source of the 1D toy example
+    :caption: Source of the 1D GMM toy example
