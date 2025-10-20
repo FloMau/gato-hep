@@ -288,6 +288,10 @@ def main():
                 boundary_frames.append(boundary_fname)
             loss_history.append(loss.numpy())
 
+        checkpoint_dir = os.path.join(path_gato, "checkpoints", f"{n_cats}_bins")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        model.save(checkpoint_dir)
+
         bias_plot_base = os.path.join(path_gato, f"bias_history_{n_cats}bins")
         plot_bias_history(
             mean_bias_history,
