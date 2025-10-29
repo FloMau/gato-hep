@@ -37,6 +37,14 @@ html_theme = "pydata_sphinx_theme"
 here = Path(__file__).parent
 staticfolder = here / "_static"
 
+html_static_path = ["_static", "logos"]
+html_theme_options = {
+    "logo": {
+        "image_light": "logos/gato-hep.png",
+        "image_dark": "logos/gato-hep-darkmode.png",
+    }
+}
+
 project = pyproject["project"]["name"]
 author = pyproject["project"]["authors"][0]["name"]
 copyright = "{}. Last updated {}".format(
