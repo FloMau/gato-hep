@@ -1,9 +1,14 @@
-gato-hep
-========
+<p align="left">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/source/logos/gato-hep-darkmode.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/source/logos/gato-hep.png">
+    <img alt="gato-hep logo" src="docs/source/logos/gato-hep.png" width="120">
+  </picture>
+</p>
 
 [![Documentation Status](https://readthedocs.org/projects/gato-hep/badge/?version=latest)](https://gato-hep.readthedocs.io/en/latest/)
 
-Gradient-based cATegorization Optimizer for High Energy Physics analyses.
+We present gato-hep: the Gradient-based cATegorization Optimizer for High Energy Physics analyses.
 gato-hep learns boundaries in N-dimensional discriminants that maximize signal significance for binned likelihood fits, using differentiable significance models and TensorFlow-based optimization.
 
 
