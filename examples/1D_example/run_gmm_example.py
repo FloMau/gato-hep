@@ -352,7 +352,9 @@ def main():
                 )
                 print("Effective boundaries:", model.get_effective_boundaries_1d())
         # save the trained GATO model
-        checkpoint_dir = os.path.join(path_plots, f"checkpoints/{nbins}_bins")
+        checkpoint_dir = os.path.join(
+            path_plots, "checkpoints", f"{nbins}_bins"
+        )
         os.makedirs(checkpoint_dir, exist_ok=True)
         model.save(checkpoint_dir)
         # Rebuild optimized histograms using effective boundaries

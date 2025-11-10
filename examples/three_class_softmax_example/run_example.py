@@ -105,10 +105,9 @@ def main():
 
     # ---------- toy data
     data = generate_toy_data_3class_3D(
-        seed=42,
-        noise_scale=0.3,
         n_signal1=100_000, n_signal2=100_000,
-        n_bkg=args.n_bkg
+        n_bkg=args.n_bkg,
+        seed=42
     )
     tensor_data = convert_data_to_tensors(data)
 

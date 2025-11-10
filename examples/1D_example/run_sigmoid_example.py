@@ -176,11 +176,6 @@ def main():
     data = generate_toy_data_1D(
         n_signal=100000,
         n_bkg=n_bkg,
-        xs_signal=0.5,
-        xs_bkg1=100,
-        xs_bkg2=80,
-        xs_bkg3=50,  # in pb
-        lumi=100,  # in /fb
         seed=42,
     )
 
@@ -387,7 +382,9 @@ def main():
                 )
                 print("Effective boundaries:", model.calculate_boundaries())
         # save the trained GATO model
-        checkpoint_dir = os.path.join(path_plots, f"checkpoints/{nbins}_bins")
+        checkpoint_dir = os.path.join(
+            path_plots, "checkpoints", f"{nbins}_bins"
+        )
         os.makedirs(checkpoint_dir, exist_ok=True)
         model.save(checkpoint_dir)
         # Rebuild optimized histograms using effective boundaries
