@@ -8,9 +8,8 @@
 
 [![Documentation Status](https://readthedocs.org/projects/gato-hep/badge/?version=latest)](https://gato-hep.readthedocs.io/en/latest/)
 
-We present gato-hep: the Gradient-based cATegorization Optimizer for High Energy Physics analyses.
-gato-hep learns boundaries in N-dimensional discriminants that maximize signal significance for binned likelihood fits, using differentiable significance models and TensorFlow-based optimization.
-
+We present `gato-hep`: the Gradient-based cATegorization Optimizer for High Energy Physics analyses.
+`gato-hep` learns boundaries in N-dimensional discriminants that maximize signal significance for binned likelihood fits, using a differentiable approximation of signal significance and gradient descent techniques for optimization with TensorFlow.
 
 - 📘 Documentation: https://gato-hep.readthedocs.io/
 - 📦 PyPI: https://pypi.org/project/gato-hep/
@@ -19,9 +18,9 @@ gato-hep learns boundaries in N-dimensional discriminants that maximize signal s
 Key Features
 ------------
 - Optimize categorizations in multi-dimensional spaces using Gaussian Mixture Models (GMM) or 1D sigmoid-based models
-- Set the range of the discriminant dimensions as needed for your discriminant
+- Set the range of the discriminant dimensions as needed for your analysis
 - Penalize low-yield or high-uncertainty categories to keep optimizations analysis-friendly
-- Built-in annealing schedules for temperature / steepness, and learning rate to stabilize training and to approach the hard class assignments
+- Built-in annealing schedules for temperature / steepness (setting the level of approximation for differentiability), and learning rate to stabilize training
 - Ready-to-run toy workflows that mirror real HEP analysis patterns
 
 Installation
@@ -67,19 +66,6 @@ from gatohep.data_generation import generate_toy_data_3class_3D
 from gatohep.models import gato_gmm_model
 from gatohep.utils import asymptotic_significance
 
-
-def convert_data_to_tensors(data):
-    tensors = {}
-    for proc, df in data.items():
-        # softmax lives on a simplex -> sufficient to use two coordinates only
-        scores = np.stack(df["NN_output"].values)[:, :2]
-        w = df["weight"].values
-        tensors[proc] = {
-            "NN_output": tf.constant(scores, dtype=tf.float32),
-            "weight": tf.constant(w, dtype=tf.float32),
-        }
-    return tensors
-
 # setup class for the 2D discriminant optimization
 class SoftmaxGMM(gato_gmm_model):
     def __init__(self, n_cats, temperature=0.3):
@@ -89,7 +75,7 @@ class SoftmaxGMM(gato_gmm_model):
             temperature=temperature,
             mean_norm="softmax",
         )
-
+    # how to calculate significance
     def call(self, data_dict):
         probs = self.get_probs(data_dict)
         sig1 = tf.zeros(self.n_cats, tf.float32)
@@ -112,10 +98,7 @@ class SoftmaxGMM(gato_gmm_model):
         # return negative geometric mean as loss
         return -tf.sqrt(z1 * z2)
 
-seed = 42
-np.random.seed(seed)
-tf.random.set_seed(seed)
-
+# load your data as dictionary containing pandas DataFrames, or use the integrated toy data generation:
 data = generate_toy_data_3class_3D(seed=seed, n_bkg=500_000)
 tensors = convert_data_to_tensors(data)
 
@@ -123,6 +106,7 @@ tensors = convert_data_to_tensors(data)
 model = SoftmaxGMM(n_cats=10, temperature=0.3)
 optimizer = tf.keras.optimizers.RMSprop(learning_rate=0.05)
 
+# actual training
 for epoch in range(100):
     with tf.GradientTape() as tape:
         loss = model.call(tensors)
@@ -144,12 +128,12 @@ See `examples/three_class_softmax_example/run_example.py` for the full training 
 
 Examples & Tutorials
 --------------------
-- `examples/1D_example/run_sigmoid_example.py` – sigmoid boundaries for a single discriminant, complete with penalties and diagnostic plots.
-- `examples/1D_example/run_gmm_example.py` – learn Gaussian mixture templates for 1D optimization.
+- `examples/1D_example/run_sigmoid_example.py` – sigmoid-based boundaries for a single discriminant.
+- `examples/1D_example/run_gmm_example.py` – GMM-based categorisation for the same data.
 - `examples/three_class_softmax_example/run_example.py` – optimize categories directly on a 3-class softmax output (shown in 2D projections).
-- `examples/analyse_sigmoid_models.py` – restore checkpoints and regenerate the plots/significance tables from trained 1D runs.
+- `examples/bumphunt_example/run_example.py` – $H\to\gamma\gamma$–style bump hunt example with inference on the mass, but including the background over a wider range for increased statistical power.
 
-Every script populates an `examples/.../Plots*/` folder with PDFs, tables, and checkpoints that you can compare in the paper workflow.
+Every script populates an `examples/.../Plots*/` folder with plots and checkpoints.
 
 Further Reading
 ---------------
