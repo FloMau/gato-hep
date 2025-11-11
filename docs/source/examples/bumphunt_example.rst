@@ -13,7 +13,7 @@ Run it with for instance:
 
 .. code-block:: bash
 
-   python examples/diphoton_bumphunt_example/run_example.py \
+   python examples/bumphunt_example/run_example.py \
        --epochs 400 \
        --gato-bins 5 8 \
        --out PlotsBumpHunt
@@ -30,7 +30,7 @@ Outputs land under ``examples/bumphunt_example/<out>/`` and contain:
 Source
 ------
 
-.. literalinclude:: ../../../examples/diphoton_bumphunt_example/run_example.py
+.. literalinclude:: ../../../examples/bumphunt_example/run_example.py
    :language: python
    :caption: Diphoton bump-hunt optimisation script
    :linenos:
