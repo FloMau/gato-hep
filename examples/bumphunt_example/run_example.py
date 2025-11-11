@@ -18,7 +18,6 @@ from gatohep.plotting_utils import (
 from gatohep.utils import (
     LearningRateScheduler,
     TemperatureScheduler,
-    asymptotic_significance,
     build_category_mass_maps,
     compute_mass_reweight_factors,
     convert_mass_data_to_tensors,
@@ -41,61 +40,41 @@ class DiphotonSoftmax(gato_gmm_model):
         self.mass_sig_low = self.mass_center - self.mass_sigma
         self.mass_sig_high = self.mass_center + self.mass_sigma
 
-    def call(self, data_dict, reweight=None):
-        probs = self.get_probs(
-            {k: {"NN_output": v["NN_output"]} for k, v in data_dict.items()}
+    def call(self, data_dict, reweight=None, reweight_processes=None):
+        masked = {}
+        for proc, tensors in data_dict.items():
+            weights = tensors["weight"]
+            if proc in ("signal1", "signal2"):
+                masses = tensors["mass"]
+                window_mask = tf.cast(
+                    tf.logical_and(
+                        masses >= self.mass_sig_low, masses <= self.mass_sig_high
+                    ),
+                    tf.float32,
+                )
+                weights = weights * window_mask
+            masked[proc] = {
+                "NN_output": tensors["NN_output"],
+                "weight": weights,
+            }
+
+        significances, bkg_yield, bkg_sum_w2 = self.get_differentiable_significance(
+            masked,
+            signal_labels=["signal1", "signal2"],
+            background_reweight=reweight,
+            reweight_processes=reweight_processes,
+            return_details=True,
         )
-        sig1 = tf.zeros(self.n_cats, tf.float32)
-        sig2 = tf.zeros(self.n_cats, tf.float32)
-        bkg_total = tf.zeros(self.n_cats, tf.float32)
-        bkg_sumw2 = tf.zeros(self.n_cats, tf.float32)
-
-        for proc, gamma in probs.items():
-            weights = data_dict[proc]["weight"]
-            masses = data_dict[proc]["mass"]
-            window_mask = tf.cast(
-                tf.logical_and(
-                    masses >= self.mass_sig_low, masses <= self.mass_sig_high
-                ),
-                tf.float32,
-            )
-
-            if proc == "signal1":
-                window_weights = weights * window_mask
-                win_yields = tf.reduce_sum(gamma * window_weights[:, None], axis=0)
-                sig1 += win_yields
-            elif proc == "signal2":
-                window_weights = weights * window_mask
-                win_yields = tf.reduce_sum(gamma * window_weights[:, None], axis=0)
-                sig2 += win_yields
-            else:
-                yields = tf.reduce_sum(gamma * weights[:, None], axis=0)
-                sumw2 = tf.reduce_sum(gamma * (weights**2)[:, None], axis=0)
-                bkg_total += yields
-                bkg_sumw2 += sumw2
-
-        if reweight is None:
-            reweight = tf.ones(self.n_cats, dtype=tf.float32)
-        else:
-            reweight = tf.reshape(tf.convert_to_tensor(reweight, tf.float32), (-1,))
-
-        bkg_window = bkg_total * reweight
-        bkg_window_w2 = bkg_sumw2 * reweight
-
-        z1 = tf.sqrt(
-            tf.reduce_sum(asymptotic_significance(sig1, bkg_window + sig2) ** 2)
-        )
-        z2 = tf.sqrt(
-            tf.reduce_sum(asymptotic_significance(sig2, bkg_window + sig1) ** 2)
-        )
+        z1 = significances["signal1"]
+        z2 = significances["signal2"]
         loss = -tf.sqrt(z1 * z2)
-        return loss, bkg_window, bkg_window_w2, sig1, sig2, bkg_total, z1, z2
+        return loss, bkg_yield, bkg_sum_w2, z1, z2
 
 
 @tf.function
 def train_step(model, data, opt, reweight, lamY, lamU, thrY, thrU):
     with tf.GradientTape() as tape:
-        loss, B_sig, B_sig_w2, _, _, _, z1, z2 = model.call(data, reweight)
+        loss, B_sig, B_sig_w2, z1, z2 = model.call(data, reweight)
         penalty_y = low_bkg_penalty(B_sig, threshold=thrY)
         penalty_u = high_bkg_uncertainty_penalty(B_sig_w2, B_sig, rel_threshold=thrU)
         total = loss + lamY * penalty_y + lamU * penalty_u
@@ -117,20 +96,19 @@ def main():
     parser.add_argument("--n-bkg", type=int, default=1_000_000)
     parser.add_argument("--n-signal", type=int, default=100_000)
     parser.add_argument("--rewt-interval", type=int, default=50)
+    parser.add_argument("--mass-sigma", type=float, default=1.5)
     parser.add_argument("--out", type=str, default="PlotsDiphotonBumpHunt")
     args = parser.parse_args()
 
-    path_plots = os.path.join(
-        "examples", "diphoton_bumphunt_example", args.out
-    )
+    path_plots = os.path.join("examples", "bumphunt_example", args.out)
     os.makedirs(path_plots, exist_ok=True)
 
     data_full = generate_resonance_toy_data(
         n_signal1=args.n_signal,
         n_signal2=args.n_signal,
         n_bkg=args.n_bkg,
-        mass_sigma=1.5,
-        background_slopes = (0.05, 0.04, 0.035, 0.03, 0.025)
+        mass_sigma=args.mass_sigma,
+        background_slopes=(0.05, 0.04, 0.035, 0.03, 0.025),
     )
     data_2d = slice_to_2d_features(data_full)
     tensor_data = convert_mass_data_to_tensors(data_2d)
@@ -236,7 +214,7 @@ def main():
         model.save(ckpt_dir)
 
         loss_eval = model.call(tensor_data, reweight)
-        _, _, _, _, _, _, z1_final, z2_final = loss_eval
+        _, _, _, z1_final, z2_final = loss_eval
         print(
             f"Final significances for {n_cats} bins: "
             f"Z(signal1)={float(z1_final.numpy()):.3f}, "

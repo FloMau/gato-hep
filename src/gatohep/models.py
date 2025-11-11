@@ -3,7 +3,8 @@ import math
 import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
-from typing import Dict, List
+from collections import OrderedDict
+from typing import Dict, List, Optional, Sequence
 
 
 tfd = tfp.distributions
@@ -356,6 +357,58 @@ class gato_gmm_model(tf.Module):
 
         bias = (hard_y - soft_y) / tf.maximum(hard_y, eps)
         return bias.numpy()
+
+    def get_differentiable_significance(
+        self,
+        data_dict,
+        *,
+        signal_labels: Sequence[str],
+        background_reweight: Optional[tf.Tensor | np.ndarray | Sequence[float]] = None,
+        reweight_processes: Optional[Sequence[str]] = None,
+        return_details: bool = False,
+    ):
+        """
+        Compute differentiable Asimov significances for arbitrary signal sets.
+
+        Parameters
+        ----------
+        data_dict : Mapping[str, dict]
+            Input tensors with at least ``"NN_output"`` and ``"weight"`` fields.
+        signal_labels : Sequence[str]
+            Names of the processes to treat as signal.  The order is preserved
+            in the returned mapping.
+        background_reweight : array_like, optional
+            Per-category scale factors (length = ``n_cats``) applied to the
+            accumulated background yield.  Defaults to ``None`` (no scaling).
+        reweight_processes : Sequence[str], optional
+            Subset of background process names that should receive the
+            reweighting factors.  If provided, only these processes are scaled;
+            otherwise all background processes are.
+        return_details : bool, optional
+            If *True*, also return a dictionary with the per-bin yields used
+            to compute the significances.
+
+        Returns
+        -------
+        OrderedDict
+            Mapping ``signal_label -> tf.Tensor`` with the differentiable
+            significance for each signal.
+        tf.Tensor, optional
+            Per-bin background yields (only if ``return_details`` is True).
+        tf.Tensor, optional
+            Per-bin background sum of squared weights (if ``return_details`` is True).
+        """
+
+        significances, bkg_yield, bkg_sum_w2 = _compute_significance_common(
+            self,
+            data_dict,
+            signal_labels,
+            background_reweight,
+            reweight_processes,
+        )
+        if return_details:
+            return significances, bkg_yield, bkg_sum_w2
+        return significances
 
     def call(self, data_dict):
         """
@@ -784,6 +837,55 @@ class gato_sigmoid_model(tf.Module):
 
         return ((hard_y - soft_y) / tf.maximum(hard_y, eps)).numpy()
 
+    def get_differentiable_significance(
+        self,
+        data_dict,
+        *,
+        signal_labels: Sequence[str],
+        background_reweight: Optional[tf.Tensor | np.ndarray | Sequence[float]] = None,
+        reweight_processes: Optional[Sequence[str]] = None,
+        return_details: bool = False,
+    ):
+        """
+        Compute differentiable Asimov significances for sigmoid-based models.
+
+        Parameters
+        ----------
+        data_dict : Mapping[str, dict]
+            Input tensors with at least ``"NN_output"`` and ``"weight"`` fields.
+        signal_labels : Sequence[str]
+            Names of the processes treated as signal.
+        background_reweight : array_like, optional
+            Per-category scale factors applied to the accumulated background
+            yield (length = ``n_cats``).  ``None`` disables reweighting.
+        reweight_processes : Sequence[str], optional
+            Background process names that should be scaled by the provided
+            factors.  If omitted, all background processes receive the
+            reweighting.
+        return_details : bool, optional
+            If *True*, also return the per-bin yield tensors used internally.
+
+        Returns
+        -------
+        OrderedDict
+            Map from signal label to differentiable significance.
+        tf.Tensor, optional
+            Background yield per bin (if ``return_details`` is True).
+        tf.Tensor, optional
+            Background sum of squared weights per bin (if ``return_details`` is True).
+        """
+
+        significances, bkg_yield, bkg_sum_w2 = _compute_significance_common(
+            self,
+            data_dict,
+            signal_labels,
+            background_reweight,
+            reweight_processes,
+        )
+        if return_details:
+            return significances, bkg_yield, bkg_sum_w2
+        return significances
+
     def save(self, path: str):
         """
         Save the model's trainable variables to a checkpoint.
@@ -876,3 +978,88 @@ class gato_sigmoid_model(tf.Module):
         rel_unc = sigma / tf.maximum(B, eps)
 
         return B, rel_unc
+
+
+def _compute_significance_common(
+    model,
+    data_dict,
+    signal_labels,
+    background_reweight,
+    reweight_processes,
+):
+    if not signal_labels:
+        raise ValueError("signal_labels must contain at least one entry.")
+
+    probs_inputs = {
+        proc: {"NN_output": entry["NN_output"]}
+        if isinstance(entry, dict) and "NN_output" in entry
+        else entry
+        for proc, entry in data_dict.items()
+    }
+    probs = model.get_probs(probs_inputs)
+
+    n_cats = model.n_cats
+    dtype = tf.float32
+    signal_labels = list(signal_labels)
+    signal_yields = {
+        label: tf.zeros(n_cats, dtype) for label in signal_labels
+    }
+
+    apply_reweight = background_reweight is not None
+    if apply_reweight:
+        factors = tf.reshape(
+            tf.convert_to_tensor(background_reweight, dtype), (n_cats,)
+        )
+    else:
+        factors = tf.ones(n_cats, dtype)
+
+    if reweight_processes is not None:
+        reweight_set = set(reweight_processes)
+        if not reweight_set and apply_reweight:
+            apply_reweight = False
+    else:
+        reweight_set = None
+
+    bkg_static = tf.zeros(n_cats, dtype)
+    bkg_static_w2 = tf.zeros(n_cats, dtype)
+    bkg_rew = tf.zeros(n_cats, dtype)
+    bkg_rew_w2 = tf.zeros(n_cats, dtype)
+
+    signal_set = set(signal_labels)
+
+    for proc, gamma in probs.items():
+        weights = tf.convert_to_tensor(
+            data_dict[proc]["weight"], dtype
+        )
+        yields = tf.reduce_sum(gamma * weights[:, None], axis=0)
+        if proc in signal_set:
+            signal_yields[proc] += yields
+            continue
+
+        sumw2 = tf.reduce_sum(gamma * (weights**2)[:, None], axis=0)
+        if apply_reweight and (reweight_set is None or proc in reweight_set):
+            bkg_rew += yields
+            bkg_rew_w2 += sumw2
+        else:
+            bkg_static += yields
+            bkg_static_w2 += sumw2
+
+    background_yield = (
+        bkg_static + (bkg_rew * factors if apply_reweight else bkg_rew)
+    )
+    background_sumw2 = (
+        bkg_static_w2 + (bkg_rew_w2 * factors if apply_reweight else bkg_rew_w2)
+    )
+
+    significances = OrderedDict()
+    for label in signal_labels:
+        others = tf.zeros(n_cats, dtype)
+        for other in signal_labels:
+            if other == label:
+                continue
+            others += signal_yields[other]
+        total_bkg = background_yield + others
+        z_bins = asymptotic_significance(signal_yields[label], total_bkg)
+        significances[label] = tf.sqrt(tf.reduce_sum(z_bins**2))
+
+    return significances, background_yield, background_sumw2

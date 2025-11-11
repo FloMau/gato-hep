@@ -9,13 +9,11 @@ Run:
 
     python examples/three_class_softmax_example/run_example.py --gato-bins 5 10 20 --epochs 500
 
-Notable artifacts
+Output plots
 -----------------
 - ``frames_<N>`` folders with boundary evolution frames (assembled into GIFs).
 - Stacked histograms contrasting background compositions with scaled signal templates.
 - Yield vs. uncertainty bar charts for each bin.
-
-The :doc:`../quickstart` page provides a trimmed version of this workflow that fits a single configuration and demonstrates saving/restoring models.
 
 Source code
 -----------

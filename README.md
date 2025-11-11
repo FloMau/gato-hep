@@ -64,7 +64,18 @@ from pathlib import Path
 
 from gatohep.data_generation import generate_toy_data_3class_3D
 from gatohep.models import gato_gmm_model
-from gatohep.utils import asymptotic_significance
+
+
+def convert_data_to_tensors(data):
+    tensors = {}
+    for proc, df in data.items():
+        scores = np.stack(df["NN_output"].values)[:, :2]  # keep the first two dims
+        weights = df["weight"].values
+        tensors[proc] = {
+            "NN_output": tf.convert_to_tensor(scores, tf.float32),
+            "weight": tf.convert_to_tensor(weights, tf.float32),
+        }
+    return tensors
 
 # setup class for the 2D discriminant optimization
 class SoftmaxGMM(gato_gmm_model):
@@ -75,31 +86,18 @@ class SoftmaxGMM(gato_gmm_model):
             temperature=temperature,
             mean_norm="softmax",
         )
-    # how to calculate significance
     def call(self, data_dict):
-        probs = self.get_probs(data_dict)
-        sig1 = tf.zeros(self.n_cats, tf.float32)
-        sig2 = tf.zeros(self.n_cats, tf.float32)
-        bkg = tf.zeros(self.n_cats, tf.float32)
-
-        for proc, gamma in probs.items():
-            weights = data_dict[proc]["weight"]
-            yields = tf.reduce_sum(gamma * weights[:, None], axis=0)
-            if proc == "signal1":
-                sig1 += yields
-            elif proc == "signal2":
-                sig2 += yields
-            else:
-                bkg += yields
-
-        # we use these differentiable yields to calculate the significances for both signals
-        z1 = tf.sqrt(tf.reduce_sum(asymptotic_significance(sig1, bkg + sig2) ** 2))
-        z2 = tf.sqrt(tf.reduce_sum(asymptotic_significance(sig2, bkg + sig1) ** 2))
-        # return negative geometric mean as loss
-        return -tf.sqrt(z1 * z2)
+        # Differentiate through the Asimov significances provided by the helper
+        significances = self.get_differentiable_significance(
+            data_dict,
+            signal_labels=["signal1", "signal2"],
+        )
+        z1 = significances["signal1"]
+        z2 = significances["signal2"]
+        return -tf.sqrt(z1 * z2)  # geometric-mean loss
 
 # load your data as dictionary containing pandas DataFrames, or use the integrated toy data generation:
-data = generate_toy_data_3class_3D(seed=seed, n_bkg=500_000)
+data = generate_toy_data_3class_3D()
 tensors = convert_data_to_tensors(data)
 
 # example: use 10 bins
@@ -114,6 +112,7 @@ for epoch in range(100):
     optimizer.apply_gradients(zip(grads, model.trainable_variables))
 
 # Save the trained model for later use in the analysis to some path
+checkpoint_path = Path("softmax_demo_ckpt")
 model.save(checkpoint_path)
 
 # Restore the model
