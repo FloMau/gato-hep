@@ -396,7 +396,7 @@ class gato_gmm_model(tf.Module):
         tf.Tensor, optional
             Per-bin background yields (only if ``return_details`` is True).
         tf.Tensor, optional
-            Per-bin background sum of squared weights (only if ``return_details`` is True).
+            Per-bin background sum of squared weights (if ``return_details`` is True).
         """
 
         significances, bkg_yield, bkg_sum_w2 = _compute_significance_common(

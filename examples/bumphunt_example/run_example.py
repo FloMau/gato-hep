@@ -214,7 +214,7 @@ def main():
         model.save(ckpt_dir)
 
         loss_eval = model.call(tensor_data, reweight)
-        _, _, _, _, _, _, z1_final, z2_final = loss_eval
+        _, _, _, z1_final, z2_final = loss_eval
         print(
             f"Final significances for {n_cats} bins: "
             f"Z(signal1)={float(z1_final.numpy()):.3f}, "
