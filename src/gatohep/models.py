@@ -4,7 +4,7 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
 from collections import OrderedDict
-from typing import Dict, List, Mapping, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 
 
 tfd = tfp.distributions
