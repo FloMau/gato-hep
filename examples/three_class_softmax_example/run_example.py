@@ -58,33 +58,15 @@ class gato_2D(gato_gmm_model):
             Compute the training loss and background yields,
             which can be used for penalty terms.
         """
-        # get the probabilities from the gato GMM
-        probs_dict = self.get_probs(data_dict)
-
-        sig1_y = tf.zeros(self.n_cats, tf.float32)
-        sig2_y = tf.zeros(self.n_cats, tf.float32)
-        bkg_y = tf.zeros(self.n_cats, tf.float32)
-        bkg_w2 = tf.zeros(self.n_cats, tf.float32)
-
-        for proc, probs in probs_dict.items():
-            w = data_dict[proc]["weight"]
-            w2 = w**2
-
-            y = tf.reduce_sum(probs * w[:,None],  axis=0)
-            y_w2 = tf.reduce_sum(probs * w2[:,None], axis=0)
-
-            if proc == "signal1":
-                sig1_y += y
-            elif proc == "signal2":
-                sig2_y += y
-            else:
-                bkg_y += y
-                bkg_w2 += y_w2
-
-        Z1 = tf.sqrt(tf.reduce_sum(asymptotic_significance(sig1_y, bkg_y + sig2_y)**2))
-        Z2 = tf.sqrt(tf.reduce_sum(asymptotic_significance(sig2_y, bkg_y + sig1_y)**2))
+        significances, bkg_yield, bkg_sum_w2 = self.get_differentiable_significance(
+            data_dict,
+            signal_labels=["signal1", "signal2"],
+            return_details=True,
+        )
+        Z1 = significances["signal1"]
+        Z2 = significances["signal2"]
         loss = -tf.sqrt(Z1 * Z2)
-        return loss, bkg_y, bkg_w2
+        return loss, bkg_yield, bkg_sum_w2
 
 
 # Main function to run the example

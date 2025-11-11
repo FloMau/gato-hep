@@ -48,29 +48,13 @@ class gato_1D(gato_gmm_model):
         Compute the loss for two signals vs. backgrounds
         using the generic helpers from the base class.
         """
-        probs_dict = self.get_probs(data_dict)  # {proc: (N, k)}
-
-        sig_yield = tf.zeros(self.n_cats, tf.float32)
-        bkg_yield = tf.zeros(self.n_cats, tf.float32)
-        bkg_sumw2 = tf.zeros(self.n_cats, tf.float32)
-
-        for proc, probs in probs_dict.items():
-            w = data_dict[proc]["weight"]
-            w2 = w**2
-            y = tf.reduce_sum(probs * w[:, None], axis=0)
-            y2 = tf.reduce_sum(probs * w2[:, None], axis=0)
-
-            if proc.startswith("signal"):
-                sig_yield += y
-            else:
-                bkg_yield += y
-                bkg_sumw2 += y2
-
-        # Asimov per-bin + quadrature
-        loss = -tf.sqrt(
-            tf.reduce_sum(asymptotic_significance(sig_yield, bkg_yield) ** 2)
+        significances, bkg_yield, bkg_sum_w2 = self.get_differentiable_significance(
+            data_dict,
+            signal_labels=["signal"],
+            return_details=True,
         )
-        return loss, bkg_yield, bkg_sumw2
+        loss = -significances["signal"]
+        return loss, bkg_yield, bkg_sum_w2
 
 
 # main: Generate data, run fixed binning and optimization, then compare.
