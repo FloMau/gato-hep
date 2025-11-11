@@ -9,6 +9,8 @@ import matplotlib.animation as animation
 from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.patches import Ellipse
 
+from gatohep.utils import build_mass_histograms
+
 plt.style.use(hep.style.ROOT)
 tfd = tfp.distributions
 
@@ -155,6 +157,113 @@ def plot_stacked_histograms(
     else:
         return fig, ax_main
     return None
+
+
+def plot_inclusive_mass(
+    data,
+    out_dir,
+    *,
+    sig_scales=(50, 200),
+    bins=60,
+    mass_range=(100.0, 180.0),
+):
+    """
+    Plot the inclusive diphoton-mass spectrum before categorisation.
+
+    Parameters
+    ----------
+    data : Mapping[str, pandas.DataFrame]
+        Event tables containing ``"mass"`` and ``"weight"`` columns.
+    out_dir : str
+        Destination directory for the produced PDF files.
+    sig_scales : tuple[float, float], optional
+        Multiplicative factors applied to the two signal histograms.
+    bins : int, optional
+        Number of uniform histogram bins.
+    mass_range : tuple[float, float], optional
+        Mass range in GeV for the inclusive plots.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    hists = build_mass_histograms(
+        data,
+        bins=bins,
+        mass_range=mass_range,
+        axis_name="mass",
+    )
+    bg_procs = [p for p in hists if not p.startswith("signal")]
+    backgrounds = [hists[p] for p in bg_procs]
+    sigs = [hists.get("signal1"), hists.get("signal2")]
+    sig_scaled = []
+    sig_labels = []
+    if sigs[0] is not None:
+        sig_scaled.append(sig_scales[0] * sigs[0])
+        sig_labels.append(f"Signal1 x{sig_scales[0]}")
+    if sigs[1] is not None:
+        sig_scaled.append(sig_scales[1] * sigs[1])
+        sig_labels.append(f"Signal2 x{sig_scales[1]}")
+
+    for use_log in (False, True):
+        suffix = "log" if use_log else "linear"
+        plot_stacked_histograms(
+            stacked_hists=backgrounds,
+            process_labels=bg_procs,
+            signal_hists=sig_scaled,
+            signal_labels=sig_labels,
+            output_filename=os.path.join(
+                out_dir, f"inclusive_mass_{suffix}.pdf"
+            ),
+            axis_labels=("Diphoton mass [GeV]", "Events"),
+            log=use_log,
+        )
+
+
+def plot_category_mass_spectra(
+    per_cat_hists,
+    out_dir,
+    *,
+    sig_scales=(50, 200),
+):
+    """
+    Show per-category diphoton-mass spectra after categorisation.
+
+    Parameters
+    ----------
+    per_cat_hists : Sequence[Mapping[str, hist.Hist]]
+        Output of :func:`build_category_mass_maps`.
+    out_dir : str
+        Directory in which per-category plots are stored.
+    sig_scales : tuple[float, float], optional
+        Multiplicative factors applied to ``signal1`` and ``signal2``.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    for idx, hmap in enumerate(per_cat_hists):
+        bg_procs = [p for p in hmap if not p.startswith("signal")]
+        backgrounds = [hmap[p] for p in bg_procs]
+        if not backgrounds:
+            continue
+        sig_hists = [hmap.get("signal1"), hmap.get("signal2")]
+        sig_scaled = []
+        sig_labels = []
+        if sig_hists[0] is not None:
+            sig_scaled.append(sig_scales[0] * sig_hists[0])
+            sig_labels.append(f"Signal1 x{sig_scales[0]}")
+        if sig_hists[1] is not None:
+            sig_scaled.append(sig_scales[1] * sig_hists[1])
+            sig_labels.append(f"Signal2 x{sig_scales[1]}")
+
+        for use_log in (False, True):
+            suffix = "log" if use_log else "linear"
+            plot_stacked_histograms(
+                stacked_hists=backgrounds,
+                process_labels=bg_procs,
+                signal_hists=sig_scaled,
+                signal_labels=sig_labels,
+                output_filename=os.path.join(
+                    out_dir, f"category_{idx}_mass_{suffix}.pdf"
+                ),
+                axis_labels=("Diphoton mass [GeV]", "Events"),
+                log=use_log,
+            )
 
 
 def plot_history(

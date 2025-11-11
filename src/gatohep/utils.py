@@ -1,6 +1,7 @@
 import hist
 import numpy as np
 import tensorflow as tf
+from scipy.optimize import curve_fit
 
 
 class TemperatureScheduler:
@@ -355,3 +356,348 @@ def align_boundary_tracks(history, dist_tol=0.02, gap_max=20):
             tracks[ep, t] = cut
 
     return tracks
+
+
+def compute_mass_reweight_factors(
+    model,
+    data_dict,
+    *,
+    signal_labels=None,
+    feature_key="NN_output",
+    mass_column="mass",
+    weight_column="weight",
+    mass_sb_low=100.0,
+    mass_sb_high=180.0,
+    mass_sig_low=123.5,
+    mass_sig_high=126.5,
+    nbins=60,
+):
+    """
+    Fit an exponential to each category's diphoton-mass spectrum and
+    return per-bin factors that map the continuum yield in the full
+    sideband (100-180 GeV by default) to the yield expected in the
+    signal window (125 +/- 1 sigma).
+    """
+
+    def is_signal(name: str) -> bool:
+        if signal_labels is None:
+            return name.startswith("signal")
+        return name in signal_labels
+
+    n_cats = model.n_cats
+    bin_width = (mass_sb_high - mass_sb_low) / nbins
+    default_ratio = (mass_sig_high - mass_sig_low) / (mass_sb_high - mass_sb_low)
+
+    hists = [
+        hist.Hist.new.Reg(nbins, mass_sb_low, mass_sb_high, name="mass").Weight()
+        for _ in range(n_cats)
+    ]
+    raw_sigwin = np.zeros(n_cats, dtype=np.float64)
+
+    tf_inputs = {}
+    for proc, df in data_dict.items():
+        if df.empty:
+            continue
+        values = np.stack(df[feature_key].values)
+        tf_inputs[proc] = {"NN_output": tf.constant(values, dtype=tf.float32)}
+
+    assignments = model.get_bin_indices(tf_inputs)
+
+    for proc, df in data_dict.items():
+        if proc not in assignments or df.empty or is_signal(proc):
+            continue
+
+        cat_ids = assignments[proc].numpy()
+        masses = df[mass_column].to_numpy()
+        weights = df[weight_column].to_numpy()
+
+        for k in range(n_cats):
+            mask = cat_ids == k
+            if not np.any(mask):
+                continue
+
+            hists[k].fill(masses[mask], weight=weights[mask])
+            in_sig = mask & (masses >= mass_sig_low) & (masses < mass_sig_high)
+            if np.any(in_sig):
+                raw_sigwin[k] += weights[in_sig].sum()
+
+    def exp_func(x, A, B):
+        return A * np.exp(B * x)
+
+    def integral_exp(A, B, x1, x2):
+        if abs(B) < 1e-10:
+            return A * (x2 - x1)
+        return (A / B) * (np.exp(B * x2) - np.exp(B * x1))
+
+    factors = np.full(n_cats, default_ratio, dtype=np.float64)
+
+    for idx, hist_obj in enumerate(hists):
+        vals = hist_obj.values()
+        if not vals.size or float(np.sum(vals)) <= 0.0:
+            continue
+
+        edges = hist_obj.axes[0].edges
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        errs = np.sqrt(np.maximum(hist_obj.variances(), 1e-12))
+        p0 = [max(vals[0], 1e-6), -0.03]
+        try:
+            (A, B), _ = curve_fit(
+                exp_func,
+                centers,
+                vals,
+                p0=p0,
+                sigma=errs,
+                absolute_sigma=True,
+                maxfev=2000,
+            )
+            pred_sig = integral_exp(A, B, mass_sig_low, mass_sig_high) / bin_width
+            pred_tot = integral_exp(A, B, mass_sb_low, mass_sb_high) / bin_width
+            if pred_tot > 0.0:
+                factors[idx] = pred_sig / pred_tot
+        except RuntimeError:
+            pass
+
+        if raw_sigwin[idx] <= 0.0:
+            factors[idx] = default_ratio
+
+    return factors.astype(np.float32)
+
+
+def sample_truncated_exponential(rng, slope, size, *, low, high):
+    """
+    Draw samples from a truncated exponential distribution.
+
+    Parameters
+    ----------
+    rng : np.random.Generator
+        Random-number generator used for sampling.
+    slope : float
+        Positive exponential slope ``λ`` in ``exp(-λ·x)``.
+    size : int
+        Number of samples to draw.
+    low : float
+        Lower bound of the truncation interval.
+    high : float
+        Upper bound of the truncation interval (must exceed *low*).
+
+    Returns
+    -------
+    np.ndarray
+        Array of shape ``(size,)`` with samples in ``[low, high]``.
+    """
+    if high <= low:
+        raise ValueError("upper bound must exceed lower bound for sampling.")
+    span = high - low
+    if slope <= 0.0:
+        return low + rng.random(size) * span
+    norm = 1.0 - np.exp(-slope * span)
+    u = rng.random(size)
+    # Guard against numerical issues when u * norm -> 1.
+    epsilon = np.finfo(np.float64).tiny
+    inner = np.clip(1.0 - u * norm, epsilon, None)
+    return low - np.log(inner) / slope
+
+
+def generate_resonance_toy_data(
+    n_signal1=60_000,
+    n_signal2=60_000,
+    n_bkg=400_000,
+    *,
+    noise_scale=0.2,
+    mass_sigma=1.5,
+    seed=7,
+    background_slopes=None,
+):
+    """
+    Extend the 3-class toy dataset with Higgs-like diphoton masses.
+
+    Parameters
+    ----------
+    n_signal1, n_signal2, n_bkg : int
+        Event counts passed to :func:`generate_toy_data_3class_3D`.
+    noise_scale : float, optional
+        Multiplicative feature noise forwarded to the base generator.
+    mass_sigma : float, optional
+        Gaussian width of the resonant signal peak.
+    seed : int, optional
+        Seed for deterministic feature and mass sampling.
+    background_slopes : sequence of float, optional
+        Exponential slopes for the continuum components.  If omitted,
+        a default tuple is used and cycled over all background processes.
+
+    Returns
+    -------
+    dict[str, pandas.DataFrame]
+        The original dataframes augmented with a ``"mass"`` column.
+    """
+    from gatohep.data_generation import generate_toy_data_3class_3D
+
+    data = generate_toy_data_3class_3D(
+        n_signal1=n_signal1,
+        n_signal2=n_signal2,
+        n_bkg=n_bkg,
+        noise_scale=noise_scale,
+        seed=seed,
+    )
+    rng = np.random.default_rng(seed)
+    mass_range = (100.0, 180.0)
+    slopes = background_slopes or (0.02,)
+    bkg_names = [p for p in data if p.startswith("bkg")]
+    slope_map = {
+        name: slopes[idx % len(slopes)] for idx, name in enumerate(bkg_names)
+    }
+
+    low, high = mass_range
+    for proc, df in data.items():
+        n_events = len(df)
+        if n_events == 0:
+            df["mass"] = np.array([], dtype=np.float32)
+            continue
+        if proc.startswith("signal"):
+            masses = np.clip(rng.normal(125.0, mass_sigma, size=n_events), low, high)
+        else:
+            slope = slope_map.get(proc, slopes[0])
+            masses = sample_truncated_exponential(
+                rng, slope, n_events, low=low, high=high
+            )
+        df["mass"] = masses.astype(np.float32)
+    return data
+
+
+def slice_to_2d_features(data_dict):
+    """
+    Drop the background node of the pseudo-softmax feature vector.
+
+    Parameters
+    ----------
+    data_dict : dict[str, pandas.DataFrame]
+        Input dictionary produced by the toy generator.
+
+    Returns
+    -------
+    dict[str, pandas.DataFrame]
+        Shallow copies where ``"NN_output"`` only retains the first two
+        components per event.
+    """
+    sliced = {}
+    for proc, df in data_dict.items():
+        df_copy = df.copy()
+        df_copy["NN_output"] = [vals[:2] for vals in df_copy["NN_output"].values]
+        sliced[proc] = df_copy
+    return sliced
+
+
+def convert_mass_data_to_tensors(data_dict):
+    """
+    Convert the dataframe-based storage into TensorFlow tensors.
+
+    Parameters
+    ----------
+    data_dict : dict[str, pandas.DataFrame]
+        Mapping whose dataframes contain ``NN_output``, ``weight`` and ``mass``.
+
+    Returns
+    -------
+    dict[str, dict[str, tf.Tensor]]
+        Dictionary mirroring the input keys with tensor-valued payload.
+    """
+    tensors = {}
+    for proc, df in data_dict.items():
+        nn = np.stack(df["NN_output"].values)
+        w = df["weight"].values
+        mass = df["mass"].values
+        tensors[proc] = {
+            "NN_output": tf.constant(nn, dtype=tf.float32),
+            "weight": tf.constant(w, dtype=tf.float32),
+            "mass": tf.constant(mass, dtype=tf.float32),
+        }
+    return tensors
+
+
+def build_mass_histograms(
+    data_dict,
+    *,
+    bins=60,
+    mass_range=(100.0, 180.0),
+    axis_name="mass",
+):
+    """
+    Create diphoton-mass histograms for every process dataframe.
+
+    Parameters
+    ----------
+    data_dict : dict[str, pandas.DataFrame]
+        Mapping with ``"mass"`` and ``"weight"`` columns.
+    bins : int, optional
+        Number of uniform bins in the specified mass range.
+    mass_range : tuple[float, float], optional
+        Inclusive histogram range in GeV.
+    axis_name : str, optional
+        Name assigned to the histogram axis (for plotting labels).
+
+    Returns
+    -------
+    dict[str, hist.Hist]
+        One histogram per process.
+    """
+    hists = {}
+    for proc, df in data_dict.items():
+        hists[proc] = create_hist(
+            df["mass"].values,
+            weights=df["weight"].values,
+            bins=bins,
+            low=mass_range[0],
+            high=mass_range[1],
+            name=axis_name,
+        )
+    return hists
+
+
+def build_category_mass_maps(
+    assignments,
+    data_dict,
+    n_cats,
+    *,
+    bins=40,
+    mass_range=(100.0, 180.0),
+    axis_name="mass",
+):
+    """
+    Build per-category diphoton-mass histograms for each process.
+
+    Parameters
+    ----------
+    assignments : dict[str, np.ndarray]
+        Hard bin assignments produced by :meth:`gato_gmm_model.get_bin_indices`.
+    data_dict : dict[str, pandas.DataFrame]
+        Input frames containing ``"mass"`` and ``"weight"``.
+    n_cats : int
+        Total number of GMM categories.
+    bins, mass_range, axis_name :
+        Passed through to :func:`create_hist`.
+
+    Returns
+    -------
+    list[dict[str, hist.Hist]]
+        One entry per category with per-process histograms.
+    """
+    per_cat = []
+    for k in range(n_cats):
+        proc_hists = {}
+        for proc, df in data_dict.items():
+            cat_ids = assignments.get(proc)
+            if cat_ids is None:
+                continue
+            mask = cat_ids == k
+            if not np.any(mask):
+                continue
+            proc_hists[proc] = create_hist(
+                df["mass"].values[mask],
+                weights=df["weight"].values[mask],
+                bins=bins,
+                low=mass_range[0],
+                high=mass_range[1],
+                name=axis_name,
+            )
+        per_cat.append(proc_hists)
+    return per_cat
