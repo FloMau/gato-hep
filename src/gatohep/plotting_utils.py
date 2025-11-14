@@ -5,9 +5,9 @@ import numpy as np
 import os
 import tensorflow as tf
 import tensorflow_probability as tfp
-import matplotlib.animation as animation
 from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.patches import Ellipse
+from PIL import Image
 
 from gatohep.utils import build_mass_histograms
 
@@ -647,7 +647,7 @@ def plot_bin_boundaries_2D(
     path_plot,
     *,
     resolution: int = 1000,
-    reduce: bool = False,  # kept for API compatibility, ignored for dim==2
+    annotation: str | None = None,
 ):
     """
     Plot hard-bin regions of a *2-D* GMM on the 2-simplex face
@@ -664,6 +664,9 @@ def plot_bin_boundaries_2D(
         Grid resolution per axis.  Default 500.
     reduce : bool, optional
         Ignored (for backward compatibility with older callers).
+    annotation : str, optional
+        Text rendered in the upper-left corner of the axes (useful for
+        tagging epochs in GIF frames). Default is ``None``.
     """
     if model.dim != 2:
         raise ValueError("This helper expects a 2D model.")
@@ -738,8 +741,20 @@ def plot_bin_boundaries_2D(
     ax.set_xlabel("Discriminant dim. 0", fontsize=24)
     ax.set_ylabel("Discriminant dim. 1", fontsize=24)
 
+    if annotation:
+        ax.text(
+            0.1,
+            0.96,
+            annotation,
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=18,
+            weight="bold",
+        )
+
     plt.tight_layout()
-    plt.savefig(path_plot)
+    plt.savefig(path_plot, bbox_inches="tight", pad_inches=0.05)
     plt.close(fig)
 
 
@@ -917,21 +932,32 @@ def plot_gmm_1d(model, output_filename, x_range=(0.0, 1.0), n_points=10_000):
 
 
 def make_gif(frame_files, out_name, interval=800):
-    fig = plt.figure(figsize=(6, 4))
-    plt.axis("off")
+    """
+    Assemble a set of pre-rendered PNGs into an animated GIF without extra margins.
 
-    ims = []
+    Parameters
+    ----------
+    frame_files : Sequence[str]
+        Ordered list of frame file paths.
+    out_name : str
+        Destination GIF path.
+    interval : int, optional
+        Frame duration in milliseconds. Default is 800 ms.
+    """
+    if not frame_files:
+        raise ValueError("No frames provided for GIF creation.")
+
+    images: list[Image.Image] = []
     for fname in frame_files:
-        img = plt.imread(fname)
-        im = plt.imshow(img, animated=True)
-        ims.append([im])
+        with Image.open(fname) as img:
+            images.append(img.copy())
 
-    ani = animation.ArtistAnimation(
-        fig, ims,
-        interval=interval,
-        blit=True,
-        repeat_delay=1000
+    first, *rest = images
+    first.save(
+        out_name,
+        save_all=True,
+        append_images=rest,
+        duration=interval,
+        loop=0,
+        disposal=2,
     )
-    # This requires that pillow is available (it's a dependency of matplotlib)
-    ani.save(out_name, writer="pillow")
-    plt.close(fig)

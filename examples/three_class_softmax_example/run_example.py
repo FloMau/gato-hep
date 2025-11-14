@@ -190,7 +190,7 @@ def main():
         optimizer = tf.keras.optimizers.RMSprop(0.1)
         lr_scheduler = LearningRateScheduler(
             optimizer,
-            lr_initial=0.1,
+            lr_initial=0.05,
             lr_final=0.001,
             total_epochs=args.epochs,
             mode="cosine",
@@ -264,7 +264,8 @@ def main():
                     model,
                     [i for i in range(n_cats)],
                     boundary_fname,
-                    resolution=500
+                    resolution=500,
+                    annotation=f"Epoch {ep}",
                 )
                 boundary_frames.append(boundary_fname)
             loss_history.append(loss.numpy())
