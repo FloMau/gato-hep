@@ -174,34 +174,21 @@ def main():
         high=high,
         name="Signal",
     )
-    hist_bkg1 = create_hist(
-        data["bkg1"]["NN_output"],
-        weights=data["bkg1"]["weight"],
-        bins=n_bins,
-        low=low,
-        high=high,
-        name="Bkg1",
-    )
-    hist_bkg2 = create_hist(
-        data["bkg2"]["NN_output"],
-        weights=data["bkg2"]["weight"],
-        bins=n_bins,
-        low=low,
-        high=high,
-        name="Bkg2",
-    )
-    hist_bkg3 = create_hist(
-        data["bkg3"]["NN_output"],
-        weights=data["bkg3"]["weight"],
-        bins=n_bins,
-        low=low,
-        high=high,
-        name="Bkg3",
-    )
-    bkg_hists = [hist_bkg1, hist_bkg2, hist_bkg3]
+    bkg_processes = [f"bkg{i}" for i in range(1, 6)]
+    bkg_hists = [
+        create_hist(
+            data[proc]["NN_output"],
+            weights=data[proc]["weight"],
+            bins=n_bins,
+            low=low,
+            high=high,
+            name=f"{proc.capitalize()}",
+        )
+        for proc in bkg_processes
+    ]
 
     # plot the backgrounds:
-    process_labels = ["Background 1", "Background 2", "Background 3"]
+    process_labels = [f"Background {i}" for i in range(1, len(bkg_processes) + 1)]
     signal_labels = ["Signal x 100"]
 
     # For demonstration, we compare multiple binning schemes.
@@ -385,25 +372,15 @@ def main():
             bins=opt_bin_edges,
             name="Signal_opt",
         )
-        h_bkg1_opt = create_hist(
-            data["bkg1"]["NN_output"],
-            weights=data["bkg1"]["weight"],
-            bins=opt_bin_edges,
-            name="Bkg1_opt",
-        )
-        h_bkg2_opt = create_hist(
-            data["bkg2"]["NN_output"],
-            weights=data["bkg2"]["weight"],
-            bins=opt_bin_edges,
-            name="Bkg2_opt",
-        )
-        h_bkg3_opt = create_hist(
-            data["bkg3"]["NN_output"],
-            weights=data["bkg3"]["weight"],
-            bins=opt_bin_edges,
-            name="Bkg3_opt",
-        )
-        opt_bkg_hists = [h_bkg1_opt, h_bkg2_opt, h_bkg3_opt]
+        opt_bkg_hists = [
+            create_hist(
+                data[proc]["NN_output"],
+                weights=data[proc]["weight"],
+                bins=opt_bin_edges,
+                name=f"{proc}_opt",
+            )
+            for proc in bkg_processes
+        ]
 
         # Compute significance from these optimized histograms.
         Z_opt = compute_significance_from_hists(h_signal_opt, opt_bkg_hists)
