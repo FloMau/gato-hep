@@ -123,11 +123,11 @@ def main():
         model = DiphotonSoftmax(
             n_cats=n_cats, temperature=1.0, mass_sigma=args.mass_sigma
         )
-        optimizer = tf.keras.optimizers.RMSprop(0.1)
+        optimizer = tf.keras.optimizers.RMSprop(0.05)
         lr_scheduler = LearningRateScheduler(
             optimizer,
-            lr_initial=0.1,
-            lr_final=0.002,
+            lr_initial=0.05,
+            lr_final=0.001,
             total_epochs=args.epochs,
             mode="cosine",
         )
@@ -202,6 +202,7 @@ def main():
                     list(range(n_cats)),
                     boundary_fname,
                     resolution=600,
+                    annotation=f"Epoch {epoch}",
                 )
                 boundary_frames.append(boundary_fname)
                 print(
