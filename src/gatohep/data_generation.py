@@ -112,6 +112,7 @@ def generate_toy_data_3class_3D(
         p: _sample(p, counts[p], seed + i if seed else None)
         for i, p in enumerate(processes)
     }
+    # apply noise to the sampled data to mimic detector effects
     for p in processes:
         raw[p] *= np.random.normal(1.0, noise_scale, size=raw[p].shape)
 
@@ -222,6 +223,9 @@ def generate_toy_data_1D(
         "bkg4":   _sample("bkg4",    n_bkg4,  seed + 4 if seed else None),
         "bkg5":   _sample("bkg5",    n_bkg5,  seed + 5 if seed else None),
     }
+    # apply noise to the sampled data to mimic detector effects
+    for proc in X:
+        X[proc] *= np.random.normal(1.0, noise_scale, size=X[proc].shape)
 
     pdf_sig = multivariate_normal(MEANS["signal1"], COV)
     pdf_bkg = {
@@ -238,9 +242,6 @@ def generate_toy_data_1D(
         Xp = X[proc]
         ps = pdf_sig.pdf(Xp)
         pb = _pb(Xp)
-
-        ps *= np.abs(np.random.normal(1.0, noise_scale, ps.shape))
-        pb *= np.abs(np.random.normal(1.0, noise_scale, pb.shape))
 
         lr = ps / (pb + 1e-12)
         disc = lr / (1.0 + lr)        # map to (0,1)
