@@ -41,6 +41,7 @@ class gato_1D(gato_gmm_model):
             temperature=temperature,
             mean_norm=mean_norm,
             mean_range=(0.0, 1.0),
+            cov_offdiag_damping=0.1,
         )  # dummy NN output is already in (0,1)
 
     def call(self, data_dict):
