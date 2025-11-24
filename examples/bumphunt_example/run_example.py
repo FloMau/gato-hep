@@ -36,6 +36,7 @@ class DiphotonSoftmax(gato_gmm_model):
             dim=2,
             temperature=temperature,
             mean_norm="softmax",
+            cov_offdiag_damping=0.1,
             name="gato_diphoton",
         )
         self.mass_center = tf.constant(125.0, dtype=tf.float32)

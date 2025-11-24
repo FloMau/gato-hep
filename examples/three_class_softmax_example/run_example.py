@@ -50,6 +50,7 @@ class gato_2D(gato_gmm_model):
             dim=2,
             temperature=temperature,
             mean_norm="softmax",
+            cov_offdiag_damping=0.1,
             name=name
         )
 

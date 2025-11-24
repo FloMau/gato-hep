@@ -68,6 +68,7 @@ class gato_gmm_model(tf.Module):
         temperature=1.0,
         mean_norm: str = "softmax",
         mean_range: tuple | list = (0.0, 1.0),
+        cov_offdiag_damping: float = 0.1,
         name="gato_gmm_model",
     ):
         """
@@ -81,6 +82,9 @@ class gato_gmm_model(tf.Module):
             Dimensionality of the feature space.
         temperature : float, optional
             Temperature parameter for the softmax function. Default is 1.0.
+        cov_offdiag_damping : float, optional
+            Multiplicative damping applied to the off-diagonal entries of the
+            Cholesky factors to stabilise learned covariances. Default is 0.1.
         name : str, optional
             Name of the model. Default is "gato_gmm_model".
         """
@@ -88,6 +92,7 @@ class gato_gmm_model(tf.Module):
         self.n_cats = n_cats
         self.dim = dim
         self.temperature = temperature
+        self.cov_offdiag_damping = float(cov_offdiag_damping)
 
         self.mixture_logits = tf.Variable(
             tf.random.normal([n_cats], stddev=0.1),
@@ -141,7 +146,7 @@ class gato_gmm_model(tf.Module):
         """
         L_raw = tf.linalg.band_part(self.unconstrained_L, -1, 0)
         off = L_raw - tf.linalg.diag(tf.linalg.diag_part(L_raw))
-        off = 0.1 * off
+        off = self.cov_offdiag_damping * off
         raw_diag = tf.linalg.diag_part(L_raw)
         sigma = self._sigma_base * tf.exp(raw_diag)
         return tf.linalg.set_diag(off, sigma)
