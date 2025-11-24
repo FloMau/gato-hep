@@ -689,7 +689,12 @@ def build_category_mass_maps(
             mask = cat_ids == k
             masses = df["mass"].values[mask]
             weights = df["weight"].values[mask]
-            h = hist.Hist.new.Reg(bins, mass_range[0], mass_range[1], name=axis_name).Weight()
+            h = hist.Hist.new.Reg(
+                bins,
+                mass_range[0],
+                mass_range[1],
+                name=axis_name
+            ).Weight()
             if masses.size:
                 h.fill(masses, weight=weights)
             proc_hists[proc] = h
