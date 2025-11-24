@@ -475,7 +475,10 @@ class gato_gmm_model(tf.Module):
             checkpoint.restore(manager.latest_checkpoint).expect_partial()
             print(f"INFO: model restored from {manager.latest_checkpoint}")
         else:
-            print(f"INFO: no checkpoint found in {path}, starting fresh")
+            raise FileNotFoundError(
+                f"No checkpoint found under '{path}'. "
+                "Make sure the path points to a directory with saved checkpoints."
+            )
 
     def get_effective_boundaries_1d(
         self,
@@ -915,7 +918,10 @@ class gato_sigmoid_model(tf.Module):
             checkpoint.restore(manager.latest_checkpoint).expect_partial()
             print(f"INFO: model restored from {manager.latest_checkpoint}")
         else:
-            print(f"INFO: no checkpoint found in {path}, starting fresh")
+            raise FileNotFoundError(
+                f"No checkpoint found under '{path}'. "
+                "Make sure the path points to a directory with saved checkpoints."
+            )
 
     def compute_hard_bkg_stats(self, data_dict, signal_labels=None, eps=1e-8):
         """
