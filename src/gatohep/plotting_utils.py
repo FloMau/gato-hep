@@ -272,6 +272,7 @@ def plot_history(
     y_label="Value",
     x_label="Epoch",
     boundaries=False,
+    boundary_labels=None,
     title=None,
     log_scale=False,
 ):
@@ -299,15 +300,26 @@ def plot_history(
     -------
     None
     """
-    epochs = np.arange(len(history_data))
+    values = np.asarray(history_data, dtype=float)
+    epochs = np.arange(values.shape[0])
     fig, ax = plt.subplots(figsize=(8, 6))
 
-    if not boundaries:  # scalar history
-        ax.plot(epochs, history_data, marker="o")
-    else:  # matrix (epochs, n_tracks)
-        values = np.asarray(history_data, dtype=float)
+    multi_series = boundaries or (
+        values.ndim > 1 and (values.shape[1] if values.ndim > 1 else 1) > 1
+    )
+
+    if not multi_series:
+        ax.plot(epochs, values, marker="o")
+    else:
+        if values.ndim == 1:
+            values = values[:, None]
         n_trk = values.shape[1]
         cmap = plt.get_cmap("tab20", n_trk)
+        labels = (
+            boundary_labels
+            if boundary_labels is not None and len(boundary_labels) == n_trk
+            else [f"Series {t + 1}" for t in range(n_trk)]
+        )
         for t in range(n_trk):
             ax.plot(
                 epochs,
@@ -315,7 +327,7 @@ def plot_history(
                 marker="o",
                 markersize=3,
                 color=cmap(t),
-                label=f"Boundary {t + 1}",
+                label=labels[t],
             )
 
     ax.set_xlabel(x_label, fontsize=22)

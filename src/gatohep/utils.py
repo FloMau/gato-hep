@@ -370,13 +370,14 @@ def compute_mass_reweight_factors(
     mass_sb_high=180.0,
     mass_sig_low=123.5,
     mass_sig_high=126.5,
-    nbins=60,
+    nbins=10,
 ):
     """
     Fit an exponential to each category's diphoton-mass spectrum and
     return per-bin factors that map the continuum yield in the full
     sideband (100-180 GeV by default) to the yield expected in the
     signal window (125 +/- 1 sigma).
+
     """
 
     def is_signal(name: str) -> bool:
@@ -438,7 +439,6 @@ def compute_mass_reweight_factors(
 
         edges = hist_obj.axes[0].edges
         centers = 0.5 * (edges[:-1] + edges[1:])
-        errs = np.sqrt(np.maximum(hist_obj.variances(), 1e-12))
         p0 = [max(vals[0], 1e-6), -0.03]
         try:
             (A, B), _ = curve_fit(
@@ -446,8 +446,6 @@ def compute_mass_reweight_factors(
                 centers,
                 vals,
                 p0=p0,
-                sigma=errs,
-                absolute_sigma=True,
                 maxfev=2000,
             )
             pred_sig = integral_exp(A, B, mass_sig_low, mass_sig_high) / bin_width
@@ -689,15 +687,16 @@ def build_category_mass_maps(
             if cat_ids is None:
                 continue
             mask = cat_ids == k
-            if not np.any(mask):
-                continue
-            proc_hists[proc] = create_hist(
-                df["mass"].values[mask],
-                weights=df["weight"].values[mask],
-                bins=bins,
-                low=mass_range[0],
-                high=mass_range[1],
-                name=axis_name,
-            )
+            masses = df["mass"].values[mask]
+            weights = df["weight"].values[mask]
+            h = hist.Hist.new.Reg(
+                bins,
+                mass_range[0],
+                mass_range[1],
+                name=axis_name
+            ).Weight()
+            if masses.size:
+                h.fill(masses, weight=weights)
+            proc_hists[proc] = h
         per_cat.append(proc_hists)
     return per_cat
