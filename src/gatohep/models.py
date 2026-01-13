@@ -447,7 +447,7 @@ class gato_gmm_model(tf.Module):
             "log mixture weights": tf.math.log_sigmoid(self.mixture_logits)
             .numpy()
             .tolist(),
-            "means": self.means.numpy().tolist(),
+            "means": self.get_effective_means().numpy().tolist(),
             "scale_tril": self.get_scale_tril().numpy().tolist(),
         }
 
