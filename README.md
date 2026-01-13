@@ -8,12 +8,29 @@
 
 [![Documentation Status](https://readthedocs.org/projects/gato-hep/badge/?version=latest)](https://gato-hep.readthedocs.io/en/latest/)
 
-We present `gato-hep`: the Gradient-based cATegorization Optimizer for High Energy Physics analyses.
+We present `gato-hep`: the Gradient-based cATegorization Optimizer for High-Energy Physics.
 `gato-hep` learns boundaries in N-dimensional discriminants that maximize signal significance for binned likelihood fits, using a differentiable approximation of signal significance and gradient descent techniques for optimization with TensorFlow.
 
+- 🐙 GitHub: https://github.com/FloMau/gato-hep
 - 📘 Documentation: https://gato-hep.readthedocs.io/
 - 📦 PyPI: https://pypi.org/project/gato-hep/
 - 🧪 Examples: see the `examples/` directory in this repository
+
+This repository contains the code for the GATO approach shown in
+[Learning to bin: differentiable and Bayesian optimization for multi-dimensional discriminants in high-energy physics](https://arxiv.org/abs/2601.07756).
+If you use the package in your work, please cite:
+
+```bibtex
+@article{Erdmann:2026opi,
+    author = "Erdmann, Johannes and Kasaraguppe, Nitish Kumar and Mausolf, Florian",
+    title = "{Learning to bin: differentiable and Bayesian optimization for multi-dimensional discriminants in high-energy physics}",
+    eprint = "2601.07756",
+    archivePrefix = "arXiv",
+    primaryClass = "physics.data-an",
+    month = "1",
+    year = "2026"
+}
+```
 
 Key Features
 ------------
@@ -125,7 +142,7 @@ assignments = restored.get_bin_indices(tensors)
 
 See `examples/three_class_softmax_example/run_example.py` for the full training loop with schedulers, plotting helpers, and GIF generation.
 
-Examples & Tutorials
+Examples
 --------------------
 - `examples/1D_example/run_sigmoid_example.py` – sigmoid-based boundaries for a single discriminant.
 - `examples/1D_example/run_gmm_example.py` – GMM-based categorisation for the same data.
