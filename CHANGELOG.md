@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.1] - 2026-01-13
+- Improved documentation.
+- Fixed `get_effective_parameters` to include normalization to raw means.
+
 ## [0.2.0] - 2025-11-25
 - Renamed the `get_bin` helper to `get_bin_indices` for clarity.
 - Added `get_differentiable_significance` so applications/examples no longer repeat the same significance logic.
