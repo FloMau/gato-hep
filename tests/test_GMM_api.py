@@ -140,3 +140,21 @@ def test_threeclass_end_to_end(tmp_path):
         rtol=1e-6,
         atol=1e-6,
     )
+
+
+def test_gmm_component_log_probs_match_tfp():
+    tf.random.set_seed(321)
+    model = gato_gmm_model(n_cats=5, dim=4, mean_norm="softmax", temperature=0.7)
+    x = tf.random.uniform((17, 4), dtype=tf.float32)
+
+    low_memory_lp = model._component_log_probs(x)
+    tfp_lp = model.get_mixture_pdf().components_distribution.log_prob(
+        x[:, tf.newaxis, :]
+    )
+
+    np.testing.assert_allclose(
+        low_memory_lp.numpy(),
+        tfp_lp.numpy(),
+        rtol=1e-5,
+        atol=1e-5,
+    )

@@ -203,17 +203,49 @@ class gato_gmm_model(tf.Module):
             name="GMM",
         )
 
+    def _component_log_probs(self, x: tf.Tensor) -> tf.Tensor:
+        """
+        Evaluate per-component Gaussian log-probabilities with low memory use.
+
+        TensorFlow Probability's fully batched ``MultivariateNormalTriL`` path
+        is convenient, but for large ``N x n_cats x dim`` inputs it may allocate
+        broadcasted linear-algebra intermediates with an additional ``dim`` axis.
+        Solving one component at a time keeps the differentiable hot path at
+        ``O(N * dim)`` working memory per component plus the final ``O(N * n_cats)``
+        log-probability matrix.
+        """
+        loc = self.get_effective_means()  # (k, dim)
+        scale_tril = self.get_scale_tril()  # (k, dim, dim)
+        diag = tf.linalg.diag_part(scale_tril)  # (k, dim)
+
+        dim = tf.cast(tf.shape(x)[-1], x.dtype)
+        log_two_pi = tf.cast(tf.math.log(2.0 * np.pi), x.dtype)
+
+        log_probs = []
+        for k in range(self.n_cats):
+            centered = x - loc[k]  # (N, dim)
+            rhs = tf.transpose(centered)  # (dim, N)
+            whitened = tf.linalg.triangular_solve(
+                scale_tril[k], rhs, lower=True
+            )  # (dim, N)
+            mahalanobis = tf.reduce_sum(tf.square(whitened), axis=0)  # (N,)
+            log_det = tf.reduce_sum(tf.math.log(diag[k]))
+            log_probs.append(
+                -0.5 * (mahalanobis + 2.0 * log_det + dim * log_two_pi)
+            )
+
+        return tf.stack(log_probs, axis=1)  # (N, k)
+
     def get_probs(self, data, temperature=None):
         """
         Return the soft assignment matrix ``gamma_ik`` for any input form.
 
-        The method evaluates the log-pdf of every GMM component via the
-        model's :py:meth:`get_mixture_pdf` helper—so it automatically uses
-        the **current** means, covariances, and softmax-normalised mixture
-        weights stored in ``self.mixture_logits``.  The per-component
-        log-probabilities ``log p_k(x)`` are combined with the log-weights
-        and converted to probabilities through a *temperature-scaled*
-        soft-max:
+        The method evaluates the log-pdf of every GMM component with a
+        memory-efficient triangular solve, so it automatically uses the
+        **current** means, covariances, and softmax-normalised mixture weights
+        stored in ``self.mixture_logits``.  The per-component log-probabilities
+        ``log p_k(x)`` are combined with the log-weights and converted to
+        probabilities through a *temperature-scaled* soft-max:
 
         ``gamma_ik = softmax((log p_k(x_i) + log pi_k) / T)``
 
@@ -240,12 +272,7 @@ class gato_gmm_model(tf.Module):
         """
 
         T = temperature or self.temperature
-        gmm = self.get_mixture_pdf()  # MixtureSameFamily
-
-        # Log-softmax of the logits held inside the mixture distribution
-        mix_log_w = tf.nn.log_softmax(
-            gmm.mixture_distribution.logits_parameter()
-        )  # (k,)
+        mix_log_w = self.get_mixture_weight()  # (k,)
 
         def _single(x):
             # convert to rank-2 tensor (N, dim)
@@ -253,8 +280,8 @@ class gato_gmm_model(tf.Module):
             if x.shape.rank == 1:
                 x = x[..., tf.newaxis]
 
-            # Per-component log-pdfs: (N,1,dim) vs (k,dim) → (N,k)
-            lp = gmm.components_distribution.log_prob(x[:, tf.newaxis, :])
+            # Per-component log-pdfs without broadcasted (N,k,dim,dim) workspaces.
+            lp = self._component_log_probs(x)
 
             gamma_log = (lp + mix_log_w) / T
             return tf.nn.softmax(gamma_log, axis=-1)  # (N,k)
